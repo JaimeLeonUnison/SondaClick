@@ -31,6 +31,7 @@ interface NetworkInterface {
 
 interface SystemInfo {
   user: string;
+  hostname: string;
   cpu_percent: number;
   memory: MemoryInfo;
   cpu_speed: number | null;
@@ -98,7 +99,7 @@ function App(): React.ReactElement {
     <div className="font-sans p-4 sm:p-6 md:p-8 max-w-7xl mx-auto" style={{ fontFamily: "Arial" }}>
       <div className="flex flex-col sm:flex-row justify-between items-center mb-4 sm:mb-6 gap-3">
         <h1 className="text-3xl sm:text-4xl font-semibold text-center sm:text-left w-full sm:w-auto">
-          Monitor del Sistema
+          Monitoreo del Sistema
         </h1>
         
         {info && !loading && (
@@ -126,6 +127,7 @@ function App(): React.ReactElement {
             <h2 className="text-lg sm:text-xl font-semibold mb-2">Información del Sistema</h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-4">
               <p className="text-sm sm:text-base"><strong>Usuario:</strong> {info.user}</p>
+              <p className="text-sm sm:text-base"><strong>Hostname:</strong> {info.hostname}</p>
               <p className="text-sm sm:text-base"><strong>Sistema operativo:</strong> {info.os}</p>
               <p className="text-sm sm:text-base"><strong>Marca:</strong> {info.manufacturer}</p>
               <p className="text-sm sm:text-base"><strong>Modelo:</strong> {info.model}</p>
