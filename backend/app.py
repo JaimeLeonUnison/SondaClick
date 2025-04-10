@@ -159,6 +159,13 @@ def get_network_interfaces():
         interfaces.append(iface_info)
     return interfaces
 
+def get_hostname():
+    try:
+        return socket.gethostname()
+    except Exception as e:
+        print(f"Error obteniendo nombre de host: {e}")
+        return "No disponible"
+
 @app.route("/api/system-info")
 def system_info():
     sys_details = get_system_details()
@@ -167,6 +174,7 @@ def system_info():
 
     return jsonify({
         "user": getpass.getuser(),
+        "hostname": get_hostname(),
         "cpu_percent": psutil.cpu_percent(interval=1),
         "memory": psutil.virtual_memory()._asdict(),
         "cpu_speed": get_cpu_speed(),
