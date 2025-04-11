@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import Example from "../components/Example";
+import PasswordChangeButton from '../components/PasswordChangeButton';
 
 // Definición de interfaces actualizada
 interface MemoryInfo {
@@ -8,6 +9,11 @@ interface MemoryInfo {
   percent: number;
   free: number;
   available: number;
+}
+
+interface PasswordChangeResponse {
+  success: boolean;
+  message: string;
 }
 
 interface DiskUsage {
@@ -95,6 +101,33 @@ function App(): React.ReactElement {
     );
   };
 
+  const changePassword = async (username: string, oldPassword: string, newPassword: string): Promise<string> => {
+    try {
+      const response = await fetch("http://localhost:5000/api/change-password", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          username,
+          oldPassword,
+          newPassword,
+        }),
+      });
+  
+      const data: PasswordChangeResponse = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || "Error al cambiar la contraseña");
+      }
+      
+      return data.message;
+    } catch (error) {
+      console.error("Error al cambiar la contraseña:", error);
+      throw error;
+    }
+  };
+
   return (
     <div className="font-sans p-4 sm:p-6 md:p-8 max-w-7xl mx-auto" style={{ fontFamily: "Arial" }}>
       <div className="flex flex-col sm:flex-row justify-between items-center mb-4 sm:mb-6 gap-3">
@@ -103,13 +136,14 @@ function App(): React.ReactElement {
         </h1>
         
         {info && !loading && (
-          <div className="flex-shrink-0 w-full sm:w-auto">
-            <Example onClick={openTeamsApp}>
-              Levantar ticket con soporte
-            </Example>
-          </div>
-        )}
-      </div>
+        <div className="flex-shrink-0 w-full sm:w-auto flex flex-col sm:flex-row gap-2 justify-center">
+          <PasswordChangeButton changePassword={changePassword} buttonText="Cambiar contraseña" />
+          <Example onClick={openTeamsApp}>
+            Levantar ticket con soporte
+          </Example>
+        </div>
+      )}
+    </div>
       
       {loading && <p className="text-center text-lg">Cargando información del sistema...</p>}
       
