@@ -8,6 +8,10 @@ import shutil
 import platform
 import getpass
 import uuid
+import ctypes
+from flask import request
+import re
+import os
 
 app = Flask(__name__)
 CORS(app)  # Permite que el frontend (React) haga peticiones
@@ -165,6 +169,111 @@ def get_hostname():
     except Exception as e:
         print(f"Error obteniendo nombre de host: {e}")
         return "No disponible"
+    
+def change_password(username, old_password, new_password):
+    try:
+        # Determinar si el usuario está en un dominio o es local
+        is_domain_user = False
+        domain = None
+        
+        # Verificar si el nombre de usuario incluye dominio (formato: DOMINIO\usuario)
+        if '\\' in username:
+            domain, username = username.split('\\', 1)
+            is_domain_user = True
+        else:
+            # Intentar determinar si está en un dominio consultando la información del sistema
+            try:
+                domain_info = subprocess.check_output("wmic computersystem get domain", shell=True).decode().strip()
+                domain_lines = [line.strip() for line in domain_info.split('\n') if line.strip()]
+                if len(domain_lines) > 1:
+                    domain = domain_lines[1]
+                    # Si no es WORKGROUP, probablemente es un dominio
+                    is_domain_user = domain.upper() != "WORKGROUP"
+            except Exception as e:
+                print(f"Error al verificar dominio: {e}")
+        
+        # Verificar si la aplicación se está ejecutando como administrador
+        is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
+        if not is_admin:
+            return {"success": False, "message": "Esta operación requiere privilegios de administrador"}
+        
+        # Validar la contraseña actual
+        validation_success = False
+        
+        if is_domain_user and domain:
+            # Para usuarios de dominio, intentar validar contraseña
+            try:
+                # Usar logon con PowerShell
+                ps_cmd = f'powershell -Command "$secpasswd = ConvertTo-SecureString \'{old_password}\' -AsPlainText -Force; $creds = New-Object System.Management.Automation.PSCredential (\'{domain}\\{username}\', $secpasswd); $result = Invoke-Command -ComputerName localhost -Credential $creds -ScriptBlock {{ $true }} -ErrorAction SilentlyContinue; if ($result) {{ Write-Output \'Success\' }} else {{ Write-Output \'Failure\' }}"'
+                ps_result = subprocess.run(ps_cmd, shell=True, capture_output=True, text=True)
+                validation_success = "Success" in ps_result.stdout
+            except Exception as e:
+                print(f"Error validando contraseña de dominio: {e}")
+                return {"success": False, "message": f"Error validando credenciales: {str(e)}"}
+        else:
+            # Para usuarios locales, usar el método existente
+            verify_cmd = f'echo {old_password} | runas /user:{username} "cmd.exe /c echo Contraseña correcta" 2>&1'
+            verify_result = subprocess.run(verify_cmd, shell=True, capture_output=True, text=True)
+            validation_success = "Contraseña no es correcta" not in verify_result.stderr.lower() and "incorrect password" not in verify_result.stderr.lower()
+        
+        if not validation_success:
+            return {"success": False, "message": "Contraseña actual incorrecta"}
+            
+        # Cambiar la contraseña
+        if is_domain_user and domain:
+            # Para usuarios de dominio
+            try:
+                # Usar PowerShell para cambiar contraseña de dominio
+                ps_cmd = f'powershell -Command "$secpasswd = ConvertTo-SecureString \'{old_password}\' -AsPlainText -Force; $newpasswd = ConvertTo-SecureString \'{new_password}\' -AsPlainText -Force; $creds = New-Object System.Management.Automation.PSCredential (\'{domain}\\{username}\', $secpasswd); try {{ Set-ADAccountPassword -Identity \'{username}\' -OldPassword $secpasswd -NewPassword $newpasswd -ErrorAction Stop; Write-Output \'Success\' }} catch {{ Write-Output $_.Exception.Message }}"'
+                ps_result = subprocess.run(ps_cmd, shell=True, capture_output=True, text=True)
+                
+                if "Success" in ps_result.stdout:
+                    return {"success": True, "message": "Contraseña de dominio cambiada con éxito"}
+                else:
+                    error_msg = ps_result.stdout.strip() or ps_result.stderr.strip() or "Error desconocido"
+                    
+                    # Alternativa: intentar cambiar con ADSI si falló
+                    try:
+                        adsi_cmd = f'powershell -Command "$secpasswd = ConvertTo-SecureString \'{old_password}\' -AsPlainText -Force; $creds = New-Object System.Management.Automation.PSCredential (\'{domain}\\{username}\', $secpasswd); try {{ $user = [ADSI]"WinNT://{domain}/{username}"; $user.ChangePassword(\'{old_password}\', \'{new_password}\'); Write-Output \'Success\' }} catch {{ Write-Output $_.Exception.Message }}"'
+                        adsi_result = subprocess.run(adsi_cmd, shell=True, capture_output=True, text=True)
+                        
+                        if "Success" in adsi_result.stdout:
+                            return {"success": True, "message": "Contraseña de dominio cambiada con éxito (método alternativo)"}
+                    except Exception as e:
+                        print(f"Error en método ADSI: {e}")
+                        
+                    return {"success": False, "message": f"Error al cambiar contraseña de dominio: {error_msg}"}
+            except Exception as e:
+                print(f"Error cambiando contraseña de dominio: {e}")
+                return {"success": False, "message": f"Error: {str(e)}"}
+        else:
+            # Para usuarios locales
+            try:
+                cmd = f'net user {username} {new_password}'
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+                
+                if result.returncode == 0:
+                    return {"success": True, "message": "Contraseña local cambiada con éxito"}
+                else:
+                    error_msg = result.stderr.strip() if result.stderr else result.stdout.strip() if result.stdout else "Error desconocido"
+                    
+                    # Si falló, intentar con método alternativo (WinAPI)
+                    try:
+                        ps_cmd = f'powershell -Command "try {{ $user = [ADSI]\'WinNT://./\' + \'{username}\'; $user.ChangePassword(\'{old_password}\', \'{new_password}\'); Write-Output \'Success\' }} catch {{ Write-Output $_.Exception.Message }}"'
+                        ps_result = subprocess.run(ps_cmd, shell=True, capture_output=True, text=True)
+                        
+                        if "Success" in ps_result.stdout:
+                            return {"success": True, "message": "Contraseña local cambiada con éxito (método alternativo)"}
+                    except Exception as e:
+                        print(f"Error en método ADSI local: {e}")
+                        
+                    return {"success": False, "message": f"Error al cambiar contraseña local: {error_msg}"}
+            except Exception as e:
+                print(f"Error cambiando contraseña local: {e}")
+                return {"success": False, "message": f"Error: {str(e)}"}
+    except Exception as e:
+        print(f"Error general cambiando contraseña: {e}")
+        return {"success": False, "message": f"Error inesperado: {str(e)}"}
 
 @app.route("/api/system-info")
 def system_info():
@@ -187,6 +296,43 @@ def system_info():
         "network_interfaces": interfaces,
         **sys_details
     })
+
+@app.route("/api/change-password", methods=["POST"])
+def change_password_endpoint():
+    """
+    Endpoint para cambiar la contraseña del usuario
+    Requiere: username, oldPassword, newPassword
+    """
+    try:
+        # Obtenemos los datos del cuerpo de la solicitud
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"success": False, "message": "Datos no proporcionados"}), 400
+            
+        username = data.get("username")
+        old_password = data.get("oldPassword")
+        new_password = data.get("newPassword")
+        
+        # Validamos que todos los campos requeridos estén presentes
+        if not all([username, old_password, new_password]):
+            return jsonify({"success": False, "message": "Faltan campos requeridos"}), 400
+            
+        # Validamos requisitos mínimos de seguridad para la nueva contraseña
+        if len(new_password) < 8:
+            return jsonify({"success": False, "message": "La nueva contraseña debe tener al menos 8 caracteres"}), 400
+            
+        # Ejecutamos la función de cambio de contraseña
+        result = change_password(username, old_password, new_password)
+        
+        if result["success"]:
+            return jsonify(result), 200
+        else:
+            return jsonify(result), 400
+            
+    except Exception as e:
+        print(f"Error en el endpoint de cambio de contraseña: {e}")
+        return jsonify({"success": False, "message": f"Error del servidor: {str(e)}"}), 500
 
 if __name__ == "__main__":
     app.run(debug=True)
