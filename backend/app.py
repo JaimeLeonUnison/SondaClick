@@ -1,4 +1,4 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 import psutil
 import socket
@@ -9,7 +9,6 @@ import platform
 import getpass
 import uuid
 import ctypes
-from flask import request
 import re
 import os
 
@@ -296,6 +295,19 @@ def system_info():
         "network_interfaces": interfaces,
         **sys_details
     })
+
+@app.route('/api/open-password-dialog', methods=['POST', 'OPTIONS'])
+def open_password_dialog():
+    # Manejar preflight CORS
+    if request.method == 'OPTIONS':
+        return '', 200
+        
+    try:
+        # Este comando abre el diálogo de cambio de contraseña en Windows
+        subprocess.Popen('rundll32.exe keymgr.dll,KRShowKeyMgr', shell=True)
+        return jsonify({"success": True, "message": "Diálogo de cambio de contraseña abierto"})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
 
 @app.route("/api/change-password", methods=["POST"])
 def change_password_endpoint():

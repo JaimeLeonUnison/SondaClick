@@ -2,7 +2,7 @@ import React, { useState, useRef } from "react";
 import PasswordChangeModal from "./PasswordChangeModal";
 
 interface PasswordChangeButtonProps {
-  changePassword: (
+  changePassword?: (
     username: string,
     oldPassword: string,
     newPassword: string
@@ -10,6 +10,8 @@ interface PasswordChangeButtonProps {
   buttonText?: string;
   className?: string;
   disabled?: boolean;
+  useNativeDialog?: boolean;
+  onNativeDialogClick?: () => Promise<void>;
 }
 
 const PasswordChangeButton: React.FC<PasswordChangeButtonProps> = ({
@@ -17,6 +19,8 @@ const PasswordChangeButton: React.FC<PasswordChangeButtonProps> = ({
   buttonText = "Cambiar contraseña",
   className = "",
   disabled = false,
+  useNativeDialog = false,
+  onNativeDialogClick,
 }) => {
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const buttonRef = useRef<HTMLAnchorElement>(null);
@@ -24,11 +28,21 @@ const PasswordChangeButton: React.FC<PasswordChangeButtonProps> = ({
   const openModal = () => setIsModalOpen(true);
   const closeModal = () => setIsModalOpen(false);
 
+  const handleClick = async () => {
+    if (disabled) return;
+    
+    if (useNativeDialog && onNativeDialogClick) {
+      await onNativeDialogClick();
+    } else {
+      openModal();
+    }
+  };
+
   return (
     <div className="relative">
       <a
         ref={buttonRef}
-        onClick={disabled ? undefined : openModal}
+        onClick={handleClick}
         className={`
           group relative inline-flex items-center overflow-hidden 
           rounded-sm bg-indigo-600 
@@ -68,11 +82,13 @@ const PasswordChangeButton: React.FC<PasswordChangeButtonProps> = ({
         </span>
       </a>
 
-      <PasswordChangeModal
-        changePassword={changePassword}
-        isOpen={isModalOpen}
-        onClose={closeModal}
-      />
+      {!useNativeDialog && changePassword && (
+        <PasswordChangeModal
+          changePassword={changePassword}
+          isOpen={isModalOpen}
+          onClose={closeModal}
+        />
+      )}
     </div>
   );
 };
