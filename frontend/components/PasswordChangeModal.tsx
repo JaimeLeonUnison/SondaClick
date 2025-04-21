@@ -1,27 +1,30 @@
 import React, { useState, useEffect, useRef } from "react";
 
 interface PasswordChangeModalProps {
-  changePassword: (
+  isOpen: boolean;
+  onClose: () => void;
+  changePassword?: (
     username: string,
     oldPassword: string,
     newPassword: string
   ) => Promise<string>;
-  isOpen: boolean;
-  onClose: () => void;
+}
+
+interface PasswordExpirationInfo {
+  expires: boolean | null;
+  daysRemaining?: number;
+  expiryDate?: string;
+  message: string;
 }
 
 const PasswordChangeModal: React.FC<PasswordChangeModalProps> = ({
-  changePassword,
   isOpen,
   onClose,
 }) => {
-  const [username, setUsername] = useState<string>("");
-  const [oldPassword, setOldPassword] = useState<string>("");
-  const [newPassword, setNewPassword] = useState<string>("");
-  const [confirmPassword, setConfirmPassword] = useState<string>("");
-  const [message, setMessage] = useState<string>("");
+  const [expirationInfo, setExpirationInfo] = useState<PasswordExpirationInfo | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>("");
-  const [loading, setLoading] = useState<boolean>(false);
+  const [isDomainUser, setIsDomainUser] = useState<boolean>(false);
   const modalRef = useRef<HTMLDivElement>(null);
 
   // Cerrar al hacer clic fuera del modal
@@ -44,76 +47,65 @@ const PasswordChangeModal: React.FC<PasswordChangeModalProps> = ({
     };
   }, [isOpen, onClose]);
 
+  // Cargar información de expiración al abrir el modal
   useEffect(() => {
     if (isOpen) {
-      // Obtener nombre de usuario automáticamente si está disponible
-      const fetchUsername = async () => {
+      const fetchExpirationInfo = async () => {
         try {
-          const response = await fetch("http://localhost:5000/api/system-info");
-          const data = await response.json();
-          if (data.user) {
-            setUsername(data.user);
+          setLoading(true);
+          setError("");
+          
+          // Verificar si el usuario es de dominio
+          try {
+            const userResponse = await fetch("http://localhost:5000/api/user-info");
+            const userData = await userResponse.json();
+            setIsDomainUser(userData.isDomainUser || false);
+          } catch (error) {
+            console.error("Error al verificar tipo de usuario:", error);
+            setIsDomainUser(false);
+          }
+
+          // Obtener información de expiración
+          try {
+            const expiryResponse = await fetch("http://localhost:5000/api/password-expiration");
+            const expiryData = await expiryResponse.json();
+            setExpirationInfo(expiryData);
+          } catch (error) {
+            console.error("Error al obtener expiración:", error);
+            setError("No se pudo obtener la información de expiración de contraseña");
           }
         } catch (error) {
-          console.error("Error al obtener el nombre de usuario:", error);
+          console.error("Error al obtener información inicial:", error);
+          setError("Error al cargar la información");
+        } finally {
+          setLoading(false);
         }
       };
 
-      fetchUsername();
+      fetchExpirationInfo();
     }
   }, [isOpen]);
 
-  const resetForm = () => {
-    setOldPassword("");
-    setNewPassword("");
-    setConfirmPassword("");
-    setMessage("");
-    setError("");
-  };
-
-  // Cerrar el modal y resetear el formulario
-  const handleClose = () => {
-    resetForm();
-    onClose();
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setMessage("");
-    setError("");
-
-    // Validaciones básicas
-    if (!username || !oldPassword || !newPassword || !confirmPassword) {
-      setError("Todos los campos son obligatorios");
-      return;
-    }
-
-    if (newPassword !== confirmPassword) {
-      setError("Las contraseñas nuevas no coinciden");
-      return;
-    }
-
-    if (newPassword.length < 8) {
-      setError("La nueva contraseña debe tener al menos 8 caracteres");
-      return;
-    }
-
-    setLoading(true);
+  // Función para abrir el diálogo nativo de Windows
+  const openNativeDialog = async () => {
     try {
-      const result = await changePassword(username, oldPassword, newPassword);
-      setMessage(result);
-      // Limpiar los campos de contraseña
-      setOldPassword("");
-      setNewPassword("");
-      setConfirmPassword("");
-    } catch (err) {
-      if (err instanceof Error) {
-        setError(err.message);
+      setError("");
+      
+      const response = await fetch("http://localhost:5000/api/open-password-dialog", {
+        method: "POST"
+      });
+
+      const data = await response.json();
+
+      if (!data.success) {
+        setError(data.message || "No se pudo abrir el diálogo de Windows");
       } else {
-        setError("Error desconocido al cambiar la contraseña");
+        // Cerrar nuestro modal después de un momento
+        setTimeout(() => onClose(), 1500);
       }
-    } finally {
-      setLoading(false);
+    } catch (err) {
+      setError("Error al abrir el diálogo nativo de Windows");
+      console.error("Error al abrir diálogo:", err);
     }
   };
 
@@ -121,7 +113,6 @@ const PasswordChangeModal: React.FC<PasswordChangeModalProps> = ({
 
   return (
     <div className="absolute top-full right-0 mt-2 z-50">
-      {/* Card con animación */}
       <div
         ref={modalRef}
         className="relative inline-block px-4 pt-5 pb-4 overflow-hidden text-left transition-all transform bg-white rounded-lg shadow-xl sm:max-w-sm sm:w-full sm:p-6"
@@ -155,107 +146,121 @@ const PasswordChangeModal: React.FC<PasswordChangeModalProps> = ({
               className="text-lg font-medium leading-6 text-gray-800"
               id="modal-title"
             >
-              Cambiar Contraseña
+              Información de contraseña
             </h3>
-            {(message || error) && (
-              <div className="mt-2">
-                {message && (
-                  <div className="bg-green-100 border border-green-400 text-green-700 px-3 py-2 rounded text-sm">
-                    {message}
+
+            {/* Información de tipo de cuenta */}
+            <div className="mt-1 text-sm text-gray-500">
+              Cuenta {isDomainUser ? 'de dominio' : 'local'}
+            </div>
+
+            {/* Información de expiración */}
+            {loading ? (
+              <div className="mt-4 text-center">
+                <svg className="animate-spin h-5 w-5 mx-auto text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <p className="mt-2 text-sm text-gray-500">Cargando información...</p>
+              </div>
+            ) : error ? (
+              <div className="mt-4 bg-red-100 border border-red-400 text-red-700 px-3 py-2 rounded text-sm">
+                {error}
+              </div>
+            ) : expirationInfo && (
+              <div className={`mt-4 p-3 rounded-md text-sm ${
+                expirationInfo.expires && expirationInfo.daysRemaining !== undefined && expirationInfo.daysRemaining <= 5 
+                  ? 'bg-red-100 text-red-800 border border-red-200' 
+                  : 'bg-blue-50 text-blue-800 border border-blue-100'
+              }`}>
+                <div className="flex items-start">
+                  <div className="flex-shrink-0">
+                    {expirationInfo.expires && expirationInfo.daysRemaining !== undefined && expirationInfo.daysRemaining <= 5 ? (
+                      <svg className="h-5 w-5 text-red-400" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                      </svg>
+                    ) : (
+                      <svg className="h-5 w-5 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2h-1V9z" clipRule="evenodd" />
+                      </svg>
+                    )}
                   </div>
-                )}
-                {error && (
-                  <div className="bg-red-100 border border-red-400 text-red-700 px-3 py-2 rounded text-sm">
-                    {error}
+                  <div className="ml-3 text-left">
+                    <p className="font-medium">{expirationInfo.message}</p>
+                    {expirationInfo.expiryDate && (
+                      <p className="mt-1 text-xs">Fecha de expiración: {expirationInfo.expiryDate}</p>
+                    )}
                   </div>
-                )}
+                </div>
               </div>
             )}
-          </div>
 
-          <form onSubmit={handleSubmit} className="mt-4 space-y-3">
-            <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Usuario
-              </label>
-              <input
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                className="mt-1 block w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
-                readOnly={true}
-              />
+            {/* Instrucciones para cambiar la contraseña */}
+            <div className="mt-5 text-left">
+              <h4 className="font-medium text-gray-700 mb-2">Cómo cambiar tu contraseña:</h4>
+              
+              {isDomainUser ? (
+                <ol className="text-sm text-gray-600 space-y-2 list-decimal pl-5">
+                  <li>Presiona <strong>Ctrl+Alt+Supr</strong> en tu teclado</li>
+                  <li>Selecciona la opción <strong>"Cambiar una contraseña"</strong></li>
+                  <li>Ingresa tu contraseña actual</li>
+                  <li>Ingresa y confirma tu nueva contraseña</li>
+                  <li>Presiona <strong>Entrar</strong> para confirmar</li>
+                </ol>
+              ) : (
+                <ol className="text-sm text-gray-600 space-y-2 list-decimal pl-5">
+                  <li>Abre el Panel de Control de Windows</li>
+                  <li>Selecciona <strong>"Cuentas de usuario"</strong></li>
+                  <li>Haz clic en <strong>"Cambiar contraseña"</strong></li>
+                  <li>Ingresa tu contraseña actual</li>
+                  <li>Ingresa y confirma tu nueva contraseña</li>
+                  <li>Haz clic en <strong>"Cambiar contraseña"</strong> para confirmar</li>
+                </ol>
+              )}
+              
+              <div className="bg-yellow-50 border border-yellow-100 p-3 rounded-md mt-4 text-sm text-yellow-800">
+                <p className="flex items-start">
+                  <svg className="h-5 w-5 text-yellow-400 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2h-1V9z" clipRule="evenodd" />
+                  </svg>
+                  <span>
+                    <strong>Recomendaciones para tu nueva contraseña:</strong>
+                    <ul className="mt-1 list-disc pl-5">
+                      <li>Al menos 8 caracteres</li>
+                      <li>Combina letras mayúsculas y minúsculas</li>
+                      <li>Incluye números y caracteres especiales</li>
+                      <li>Evita usar información personal</li>
+                      <li>No reutilices contraseñas anteriores</li>
+                    </ul>
+                  </span>
+                </p>
+              </div>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Contraseña Actual
-              </label>
-              <input
-                type="password"
-                value={oldPassword}
-                onChange={(e) => setOldPassword(e.target.value)}
-                className="mt-1 block w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
-                autoComplete="current-password"
-              />
+            {/* Botón de acción rápida */}
+            <div className="mt-5">
+              <button
+                onClick={openNativeDialog}
+                className="w-full flex items-center justify-center px-4 py-2 text-sm font-medium text-white bg-indigo-600 border border-transparent rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                type="button"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                Abrir diálogo de cambio de contraseña
+              </button>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Nueva Contraseña
-              </label>
-              <input
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                className="mt-1 block w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
-                autoComplete="new-password"
-              />
+            {/* Botón para cerrar */}
+            <div className="mt-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="w-full px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-200 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-400"
+              >
+                Cerrar
+              </button>
             </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700">
-                Confirmar Nueva Contraseña
-              </label>
-              <input
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                className="mt-1 block w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
-                autoComplete="new-password"
-              />
-            </div>
-          </form>
-        </div>
-
-        <div className="mt-5 sm:flex sm:items-center sm:justify-between">
-          <a
-            href="#"
-            className="text-sm text-indigo-500 hover:underline transition-colors duration-300 transform"
-            onClick={() => {
-              /* Acción opcional */
-            }}
-          >
-            ¿Olvidaste tu contraseña?
-          </a>
-
-          <div className="sm:flex sm:items-center">
-            <button
-              type="button"
-              onClick={handleClose}
-              className="w-full px-4 py-2 mt-2 text-sm font-medium tracking-wide text-gray-700 capitalize transition-colors duration-300 transform border border-gray-200 rounded-md sm:mt-0 sm:w-auto sm:mx-2 hover:bg-gray-100 focus:outline-none focus:ring focus:ring-gray-300 focus:ring-opacity-40"
-              disabled={loading}
-            >
-              Cancelar
-            </button>
-            <button
-              type="button"
-              onClick={handleSubmit}
-              disabled={loading}
-              className="w-full px-4 py-2 mt-2 text-sm font-medium tracking-wide text-white capitalize transition-colors duration-300 transform bg-indigo-600 rounded-md sm:w-auto sm:mt-0 hover:bg-indigo-500 focus:outline-none focus:ring focus:ring-indigo-300 focus:ring-opacity-40 disabled:opacity-70 disabled:cursor-not-allowed"
-            >
-              {loading ? "Cambiando..." : "Cambiar"}
-            </button>
           </div>
         </div>
       </div>
