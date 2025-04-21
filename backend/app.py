@@ -168,6 +168,160 @@ def get_hostname():
     except Exception as e:
         print(f"Error obteniendo nombre de host: {e}")
         return "No disponible"
+
+@app.route("/api/password-expiration", methods=["GET", "OPTIONS"])
+def password_expiration():
+    if request.method == 'OPTIONS':
+        return '', 200
+        
+    try:
+        # Obtener el usuario actual
+        current_user = getpass.getuser()
+        
+        # Determinar si estamos en un dominio
+        domain_info = subprocess.check_output("wmic computersystem get domain", shell=True).decode().strip()
+        domain_lines = [line.strip() for line in domain_info.split('\n') if line.strip()]
+        domain = domain_lines[1] if len(domain_lines) > 1 else ""
+        is_domain = domain.upper() != "WORKGROUP"
+        
+        if not is_domain:
+            # Para usuarios locales, no hay política de expiración estándar
+            return jsonify({
+                "expires": False,
+                "message": "Este equipo no está en un dominio. Las contraseñas locales no suelen tener fecha de expiración."
+            })
+        
+        # Para usuarios de dominio, usar PowerShell para obtener la información de expiración
+        ps_cmd = '''
+        powershell -Command "
+        try {
+            # Obtener información del usuario de dominio
+            $user = [System.DirectoryServices.AccountManagement.UserPrincipal]::Current
+            
+            # Verificar si la contraseña no expira
+            if ($user.PasswordNeverExpires) {
+                Write-Output 'NO_EXPIRY'
+            }
+            # Verificar si necesita cambiar la contraseña en el siguiente inicio de sesión
+            elseif ($user.LastPasswordSet -eq $null) {
+                Write-Output 'CHANGE_REQUIRED'
+            }
+            else {
+                # Obtener información del dominio para determinar la política de contraseña
+                $context = New-Object System.DirectoryServices.ActiveDirectory.DirectoryContext('Domain', $env:USERDOMAIN)
+                $domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetDomain($context)
+                $domainPolicy = $domain.GetDirectoryEntry()
+                
+                # Obtener el período máximo de vida de contraseña (en días)
+                $maxPasswordAge = $domainPolicy.maxPwdAge.Value / -864000000000
+                
+                # Calcular fecha de expiración
+                $expiryDate = $user.LastPasswordSet.AddDays($maxPasswordAge)
+                $daysRemaining = ($expiryDate - (Get-Date)).Days
+                
+                # Devolver información formateada
+                Write-Output ('EXPIRES|' + $daysRemaining + '|' + $expiryDate.ToString('yyyy-MM-dd'))
+            }
+        } catch {
+            Write-Output ('ERROR|' + $_.Exception.Message)
+        }
+        "
+        '''
+        
+        result = subprocess.run(ps_cmd, shell=True, capture_output=True, text=True)
+        output = result.stdout.strip()
+        
+        if output.startswith('NO_EXPIRY'):
+            return jsonify({
+                "expires": False,
+                "message": "Tu contraseña no expira."
+            })
+        elif output.startswith('CHANGE_REQUIRED'):
+            return jsonify({
+                "expires": True,
+                "daysRemaining": 0,
+                "message": "Debes cambiar tu contraseña en el próximo inicio de sesión."
+            })
+        elif output.startswith('EXPIRES'):
+            parts = output.split('|')
+            days_remaining = int(parts[1])
+            expiry_date = parts[2]
+            
+            message = ""
+            if days_remaining <= 0:
+                message = "¡Tu contraseña ha expirado! Debes cambiarla inmediatamente."
+            elif days_remaining == 1:
+                message = "¡Tu contraseña expira mañana!"
+            elif days_remaining <= 5:
+                message = f"¡Tu contraseña expirará en {days_remaining} días!"
+            else:
+                message = f"Tu contraseña expirará el {expiry_date} (en {days_remaining} días)."
+                
+            return jsonify({
+                "expires": True,
+                "daysRemaining": days_remaining,
+                "expiryDate": expiry_date,
+                "message": message
+            })
+        elif output.startswith('ERROR'):
+            error_msg = output.split('|')[1] if '|' in output else "Error desconocido"
+            print(f"Error obteniendo expiración de contraseña: {error_msg}")
+            return jsonify({
+                "expires": None,
+                "message": f"No se pudo determinar la expiración de la contraseña: {error_msg}"
+            })
+        else:
+            print(f"Respuesta inesperada: {output}")
+            return jsonify({
+                "expires": None,
+                "message": "No se pudo determinar la expiración de la contraseña."
+            })
+            
+    except Exception as e:
+        print(f"Error obteniendo información de expiración de contraseña: {e}")
+        return jsonify({
+            "expires": None,
+            "message": f"Error: {str(e)}"
+        })
+        
+@app.route("/api/user-info", methods=["GET", "OPTIONS"])
+def user_info():
+    if request.method == 'OPTIONS':
+        return '', 200
+        
+    try:
+        # Obtener usuario actual
+        username = getpass.getuser()
+        
+        # Verificar si estamos en un dominio
+        domain_info = subprocess.check_output("wmic computersystem get domain", shell=True).decode().strip()
+        domain_lines = [line.strip() for line in domain_info.split('\n') if line.strip()]
+        domain = domain_lines[1] if len(domain_lines) > 1 else ""
+        is_domain = domain.upper() != "WORKGROUP"
+        
+        # Obtener nombre completo si está disponible
+        full_name = ""
+        try:
+            name_info = subprocess.check_output("wmic useraccount where name='%s' get fullname" % username, shell=True).decode().strip()
+            name_lines = [line.strip() for line in name_info.split('\n') if line.strip()]
+            if len(name_lines) > 1:
+                full_name = name_lines[1]
+        except:
+            pass
+        
+        return jsonify({
+            "username": username,
+            "fullName": full_name,
+            "isDomainUser": is_domain,
+            "domain": domain if is_domain else "No está en un dominio"
+        })
+    except Exception as e:
+        print(f"Error obteniendo información de usuario: {e}")
+        return jsonify({
+            "username": getpass.getuser(),
+            "isDomainUser": False,
+            "error": str(e)
+        })
     
 def change_password(username, old_password, new_password):
     try:
@@ -273,6 +427,43 @@ def change_password(username, old_password, new_password):
     except Exception as e:
         print(f"Error general cambiando contraseña: {e}")
         return {"success": False, "message": f"Error inesperado: {str(e)}"}
+    
+@app.route('/api/open-windows-settings', methods=['POST', 'OPTIONS'])
+def open_windows_settings():
+    if request.method == 'OPTIONS':
+        return '', 200
+        
+    try:
+        # Obtener el tipo de configuración a abrir
+        data = request.json
+        setting = data.get('setting', 'accounts')
+        
+        # Mapeo de configuraciones a URI de ms-settings
+        settings_map = {
+            'accounts': 'ms-settings:yourinfo',
+            'password': 'ms-settings:signinoptions',
+            'email': 'ms-settings:emailandaccounts',
+            'sync': 'ms-settings:sync',
+            'signin': 'ms-settings:signinoptions',
+            'privacy': 'ms-settings:privacy',
+            'network': 'ms-settings:network',
+            'bluetooth': 'ms-settings:bluetooth'
+        }
+        
+        # Obtener la URI correspondiente o usar una por defecto
+        setting_uri = settings_map.get(setting, 'ms-settings:yourinfo')
+        
+        # Ejecutar el comando para abrir la configuración
+        subprocess.Popen(f'start {setting_uri}', shell=True)
+        
+        return jsonify({
+            "success": True, 
+            "message": f"Configuración de Windows abierta: {setting}"
+        })
+            
+    except Exception as e:
+        print(f"Error al abrir configuración de Windows: {str(e)}")
+        return jsonify({"success": False, "message": str(e)}), 500
 
 @app.route("/api/system-info")
 def system_info():
@@ -298,15 +489,30 @@ def system_info():
 
 @app.route('/api/open-password-dialog', methods=['POST', 'OPTIONS'])
 def open_password_dialog():
-    # Manejar preflight CORS
     if request.method == 'OPTIONS':
         return '', 200
         
     try:
-        # Este comando abre el diálogo de cambio de contraseña en Windows
-        subprocess.Popen('rundll32.exe keymgr.dll,KRShowKeyMgr', shell=True)
-        return jsonify({"success": True, "message": "Diálogo de cambio de contraseña abierto"})
+        # Determinar si estamos en un dominio
+        domain_info = subprocess.check_output("wmic computersystem get domain", shell=True).decode().strip()
+        domain_lines = [line.strip() for line in domain_info.split('\n') if line.strip()]
+        domain = domain_lines[1] if len(domain_lines) > 1 else ""
+        is_domain = domain.upper() != "WORKGROUP"
+        
+        if is_domain:
+            # Para equipos en dominio, simplemente bloquear la pantalla
+            ctypes.windll.user32.LockWorkStation()
+            return jsonify({
+                "success": True, 
+                "message": "Se ha bloqueado la pantalla. Presione Ctrl+Alt+Supr y seleccione 'Cambiar una contraseña'"
+            })
+        else:
+            # Para equipos no en dominio
+            subprocess.Popen('control userpasswords2', shell=True)
+            return jsonify({"success": True, "message": "Panel de control de contraseñas abierto"})
+            
     except Exception as e:
+        print(f"Error al abrir configuración: {str(e)}")
         return jsonify({"success": False, "message": str(e)}), 500
 
 @app.route("/api/change-password", methods=["POST"])
@@ -345,6 +551,15 @@ def change_password_endpoint():
     except Exception as e:
         print(f"Error en el endpoint de cambio de contraseña: {e}")
         return jsonify({"success": False, "message": f"Error del servidor: {str(e)}"}), 500
+    
+@app.errorhandler(Exception)
+def handle_exception(e):
+    """Manejador global de excepciones."""
+    print(f"Error no manejado: {e}")
+    return jsonify({
+        "success": False,
+        "message": "Error interno del servidor"
+    }), 500
 
 if __name__ == "__main__":
     app.run(debug=True)

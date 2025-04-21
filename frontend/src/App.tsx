@@ -137,6 +137,40 @@ function App(): React.ReactElement {
     }
   };
 
+  // En App.tsx o donde usas el componente
+  const openWindowsSettings = async (): Promise<void> => {
+    try {
+      const response = await fetch(
+        "http://localhost:5000/api/open-windows-settings",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ setting: "accounts" })
+        }
+      );
+      
+      // Manejar la respuesta
+      const data = await response.json();
+      if (!response.ok) {
+        console.error(
+          "Error al abrir la configuración de Windows:",
+          data.message
+        );
+        // Opcional: Mostrar error al usuario
+        alert(`Error: ${data.message}`);
+      } else {
+        // Opcional: Mostrar confirmación al usuario
+        console.log("Configuración de Windows abierta:", data.message);
+      }
+    } catch (error) {
+      console.error("Error al conectar con el servidor:", error);
+      // Opcional: Mostrar error al usuario
+      alert("No se pudo conectar con el servidor. Verifica que el backend esté en ejecución.");
+    }
+  };
+
   const openNativePasswordChange = async (): Promise<void> => {
     try {
       const response = await fetch(
@@ -148,17 +182,22 @@ function App(): React.ReactElement {
           },
         }
       );
-
+  
       const data = await response.json();
       if (!response.ok) {
         console.error(
           "Error al abrir el diálogo de cambio de contraseña:",
           data.message
         );
-        // Podrías mostrar un mensaje de error aquí
+        // Mostrar error al usuario
+        alert(`Error: ${data.message}`);
+      } else {
+        // Mostrar instrucciones al usuario
+        alert(data.message || "Se ha iniciado el proceso de cambio de contraseña");
       }
     } catch (error) {
       console.error("Error al conectar con el servidor:", error);
+      alert("No se pudo conectar con el servidor. Verifica que el backend esté en ejecución.");
     }
   };
 
@@ -175,9 +214,9 @@ function App(): React.ReactElement {
         {info && !loading && (
           <div className="flex-shrink-0 w-full sm:w-auto flex flex-col sm:flex-row gap-2 justify-center">
             <PasswordChangeButton
-              useNativeDialog={true}
-              onNativeDialogClick={openNativePasswordChange}
+              useNativeDialog={false}
               changePassword={changePassword} // Añadir esta línea
+              onNativeDialogClick={openWindowsSettings}
               buttonText="Cambiar contraseña (Windows)"
               className="bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg transition-colors"
             />
