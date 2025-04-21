@@ -169,6 +169,191 @@ def get_hostname():
         print(f"Error obteniendo nombre de host: {e}")
         return "No disponible"
 
+# Añadir esta función auxiliar para obtener información de contraseña local
+def _get_local_password_expiration():
+    try:
+        # Intentar obtener información de contraseña local usando WMIC
+        cmd = "wmic useraccount where name='%s' get PasswordExpires" % getpass.getuser()
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            lines = [line.strip() for line in result.stdout.split('\n') if line.strip()]
+            if len(lines) > 1:
+                # Si TRUE, la contraseña expira; si FALSE, no expira
+                expires = lines[1].upper() == 'TRUE'
+                
+                if expires:
+                    # Intentar obtener cuándo
+                    try:
+                        # Obtener la política local
+                        cmd_policy = "net accounts"
+                        policy_result = subprocess.run(cmd_policy, shell=True, capture_output=True, text=True)
+                        
+                        if policy_result.returncode == 0:
+                            output = policy_result.stdout
+                            
+                            # Buscar el tiempo máximo de duración de contraseña
+                            max_age_match = re.search(r'(Vigencia máxima|Maximum password age).*?(\d+)', output, re.IGNORECASE)
+                            
+                            if max_age_match:
+                                max_days = int(max_age_match.group(2))
+                                
+                                # Obtener fecha del último cambio de contraseña
+                                cmd_lastset = f"net user {getpass.getuser()}"
+                                lastset_result = subprocess.run(cmd_lastset, shell=True, capture_output=True, text=True)
+                                
+                                if lastset_result.returncode == 0:
+                                    lastset_output = lastset_result.stdout
+                                    lastset_match = re.search(r'(Último cambio|Last password change).*?(\d{2}/\d{2}/\d{4})', lastset_output, re.IGNORECASE)
+                                    
+                                    if lastset_match:
+                                        import datetime
+                                        
+                                        # Intentar diferentes formatos de fecha
+                                        for fmt in ["%d/%m/%Y", "%m/%d/%Y"]:
+                                            try:
+                                                lastset_date = datetime.datetime.strptime(lastset_match.group(2), fmt).date()
+                                                expiry_date = lastset_date + datetime.timedelta(days=max_days)
+                                                days_remaining = (expiry_date - datetime.date.today()).days
+                                                
+                                                message = ""
+                                                if days_remaining <= 0:
+                                                    message = "¡Tu contraseña ha expirado! Debes cambiarla inmediatamente."
+                                                elif days_remaining == 1:
+                                                    message = "¡Tu contraseña expira mañana!"
+                                                elif days_remaining <= 5:
+                                                    message = f"¡Tu contraseña expirará en {days_remaining} días!"
+                                                else:
+                                                    message = f"Tu contraseña expirará el {expiry_date.strftime('%Y-%m-%d')} (en {days_remaining} días)."
+                                                    
+                                                return {
+                                                    "expires": True,
+                                                    "daysRemaining": days_remaining,
+                                                    "expiryDate": expiry_date.strftime('%Y-%m-%d'),
+                                                    "message": message
+                                                }
+                                            except ValueError:
+                                                continue
+                    except Exception as policy_error:
+                        print(f"Error al obtener política local: {policy_error}")
+                
+                    # Si llegamos aquí, no pudimos determinar cuándo expira
+                    return {
+                        "expires": True,
+                        "message": "Tu contraseña está configurada para expirar, pero no se pudo determinar la fecha exacta."
+                    }
+                else:
+                    # La contraseña no expira
+                    return {
+                        "expires": False,
+                        "message": "Tu contraseña no expira."
+                    }
+        
+        # Si llegamos aquí, no pudimos determinar si la contraseña expira
+        return {
+            "expires": None,
+            "message": "No se pudo determinar el estado de expiración de tu contraseña local."
+        }
+    except Exception as e:
+        print(f"Error al obtener expiración de contraseña local: {e}")
+        return {
+            "expires": None,
+            "message": "Error al verificar la información de contraseña local."
+        }
+        
+@app.route("/api/password-info", methods=["GET", "OPTIONS"])
+def get_password_info():
+    if request.method == 'OPTIONS':
+        return '', 200
+        
+    try:
+        # Obtener usuario actual o usar el nombre de usuario proporcionado
+        username = getpass.getuser()
+        
+        # Ejecutar net user para obtener la información de contraseña
+        command = f"net user {username} /domain"
+        result = subprocess.run(command, shell=True, capture_output=True, text=True, encoding='latin1')
+        
+        if result.returncode != 0:
+            # Si falla el comando de dominio, intentar con usuario local
+            command = f"net user {username}"
+            result = subprocess.run(command, shell=True, capture_output=True, text=True, encoding='latin1')
+            
+        output = result.stdout
+        
+        # Extraer la información específica que necesitamos
+        password_last_set = "No disponible"
+        password_expires = "No disponible"
+        user_may_change = "No disponible"
+        
+        for line in output.splitlines():
+            line = line.strip()
+            
+            # Comprobar diferentes formatos e idiomas
+            if any(phrase in line for phrase in ["Password last set", "contraseña establecida", "Última contraseña"]):
+                try:
+                    # Intentar extraer la fecha usando expresiones regulares
+                    import re
+                    date_match = re.search(r'\d{1,2}/\d{1,2}/\d{4}', line)
+                    if date_match:
+                        password_last_set = date_match.group(0)
+                    else:
+                        parts = line.split(":", 1)
+                        if len(parts) > 1:
+                            password_last_set = parts[1].strip()
+                except Exception as e:
+                    print(f"Error al extraer fecha de última contraseña: {e}")
+            
+            elif any(phrase in line for phrase in ["Password expires", "contraseña expira", "contraseña caduca"]):
+                try:
+                    # Similar al anterior
+                    import re
+                    date_match = re.search(r'\d{1,2}/\d{1,2}/\d{4}', line)
+                    if date_match:
+                        password_expires = date_match.group(0)
+                    elif "never" in line.lower() or "nunca" in line.lower():
+                        password_expires = "Nunca"
+                    else:
+                        parts = line.split(":", 1)
+                        if len(parts) > 1:
+                            password_expires = parts[1].strip()
+                except Exception as e:
+                    print(f"Error al extraer fecha de expiración: {e}")
+            
+            elif any(phrase in line for phrase in ["User may change password", "usuario puede cambiar", "puede cambiar"]):
+                try:
+                    # Buscar Yes/No o Sí/No
+                    if "yes" in line.lower() or "sí" in line.lower():
+                        user_may_change = "Sí"
+                    elif "no" in line.lower():
+                        user_may_change = "No"
+                    else:
+                        parts = line.split(":", 1)
+                        if len(parts) > 1:
+                            user_may_change = parts[1].strip()
+                except Exception as e:
+                    print(f"Error al extraer permiso de cambio: {e}")
+        
+        # Depuración: imprimir todo el output para revisar
+        print(f"Output completo del comando: {output}")
+        print(f"Password last set: {password_last_set}")
+        print(f"Password expires: {password_expires}")
+        print(f"User may change: {user_may_change}")
+        
+        return jsonify({
+            "success": True,
+            "passwordLastSet": password_last_set,
+            "passwordExpires": password_expires,
+            "userMayChangePassword": user_may_change
+        })
+                
+    except Exception as e:
+        print(f"Error obteniendo información de contraseña: {e}")
+        return jsonify({
+            "success": False,
+            "message": f"Error: {str(e)}"
+        })
+
 @app.route("/api/password-expiration", methods=["GET", "OPTIONS"])
 def password_expiration():
     if request.method == 'OPTIONS':
@@ -185,44 +370,225 @@ def password_expiration():
         is_domain = domain.upper() != "WORKGROUP"
         
         if not is_domain:
-            # Para usuarios locales, no hay política de expiración estándar
-            return jsonify({
-                "expires": False,
-                "message": "Este equipo no está en un dominio. Las contraseñas locales no suelen tener fecha de expiración."
-            })
+            # Para usuarios locales, usar el método específico
+            local_info = _get_local_password_expiration()
+            return jsonify(local_info)
         
+        # Método alternativo para usuarios de dominio usando net user
+        try:
+            # Usar el comando net user para obtener información del usuario en el dominio
+            net_user_cmd = f"net user {current_user} /domain"
+            result = subprocess.run(net_user_cmd, shell=True, capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                output = result.stdout
+                
+                # Buscar información sobre la expiración de la contraseña
+                password_expires_line = None
+                for line in output.split('\n'):
+                    if "La contraseña expira" in line or "Password expires" in line:
+                        password_expires_line = line
+                        break
+                
+                if password_expires_line:
+                    # Extraer la fecha de expiración
+                    parts = password_expires_line.split(':', 1)
+                    if len(parts) > 1:
+                        expiry_info = parts[1].strip()
+                        
+                        # Verificar si la contraseña nunca expira
+                        if "nunca" in expiry_info.lower() or "never" in expiry_info.lower():
+                            return jsonify({
+                                "expires": False,
+                                "message": "Tu contraseña no expira."
+                            })
+                        
+                        # Intentar parsear la fecha de expiración
+                        try:
+                            import datetime
+                            
+                            # Diferentes formatos de fecha posibles según la configuración regional
+                            date_formats = [
+                                "%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d",  # Formatos numéricos
+                                "%d-%m-%Y", "%m-%d-%Y", "%Y-%m-%d",  # Con guiones
+                                "%d %b %Y", "%b %d %Y",              # Con nombre de mes abreviado
+                                "%d %B %Y", "%B %d %Y"               # Con nombre de mes completo
+                            ]
+                            
+                            expiry_date = None
+                            for date_format in date_formats:
+                                try:
+                                    expiry_date = datetime.datetime.strptime(expiry_info, date_format).date()
+                                    break
+                                except ValueError:
+                                    continue
+                            
+                            if expiry_date:
+                                today = datetime.date.today()
+                                days_remaining = (expiry_date - today).days
+                                
+                                message = ""
+                                if days_remaining <= 0:
+                                    message = "¡Tu contraseña ha expirado! Debes cambiarla inmediatamente."
+                                elif days_remaining == 1:
+                                    message = "¡Tu contraseña expira mañana!"
+                                elif days_remaining <= 5:
+                                    message = f"¡Tu contraseña expirará en {days_remaining} días!"
+                                else:
+                                    message = f"Tu contraseña expirará el {expiry_date.strftime('%Y-%m-%d')} (en {days_remaining} días)."
+                                    
+                                return jsonify({
+                                    "expires": True,
+                                    "daysRemaining": days_remaining,
+                                    "expiryDate": expiry_date.strftime('%Y-%m-%d'),
+                                    "message": message
+                                })
+                        except Exception as date_error:
+                            print(f"Error al parsear la fecha de expiración: {date_error}")
+                
+                # Si llegamos aquí, no pudimos determinar exactamente la expiración
+                # Verificar si se menciona cambio de contraseña requerido
+                change_required = False
+                for line in output.split('\n'):
+                    if "cambiar contraseña" in line.lower() or "change password" in line.lower():
+                        if "próximo inicio" in line.lower() or "next logon" in line.lower():
+                            change_required = True
+                            break
+                
+                if change_required:
+                    return jsonify({
+                        "expires": True,
+                        "daysRemaining": 0,
+                        "message": "Debes cambiar tu contraseña en el próximo inicio de sesión."
+                    })
+            
+            # Si aún no tenemos información, intentar con el PowerShell original
+            return _get_password_expiration_via_powershell()
+                
+        except Exception as net_user_error:
+            print(f"Error al usar net user: {net_user_error}")
+            # Intentar con el método PowerShell original
+            return _get_password_expiration_via_powershell()
+            
+    except Exception as e:
+        print(f"Error obteniendo información de expiración de contraseña: {e}")
+        return jsonify({
+            "expires": None,
+            "message": f"Error: {str(e)}"
+        })
+
+# Mover el método original a una función auxiliar
+def _get_password_expiration_via_powershell():
+    try:
         # Para usuarios de dominio, usar PowerShell para obtener la información de expiración
-        ps_cmd = '''
+        ps_cmd = r'''
         powershell -Command "
         try {
-            # Obtener información del usuario de dominio
-            $user = [System.DirectoryServices.AccountManagement.UserPrincipal]::Current
+            # Método simplificado para obtener info de expiración
+            $username = $env:USERNAME
+            $userInfo = net user $username /domain 2>$null
             
-            # Verificar si la contraseña no expira
-            if ($user.PasswordNeverExpires) {
-                Write-Output 'NO_EXPIRY'
-            }
-            # Verificar si necesita cambiar la contraseña en el siguiente inicio de sesión
-            elseif ($user.LastPasswordSet -eq $null) {
-                Write-Output 'CHANGE_REQUIRED'
-            }
-            else {
-                # Obtener información del dominio para determinar la política de contraseña
-                $context = New-Object System.DirectoryServices.ActiveDirectory.DirectoryContext('Domain', $env:USERDOMAIN)
-                $domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetDomain($context)
-                $domainPolicy = $domain.GetDirectoryEntry()
+            if ($LASTEXITCODE -eq 0) {
+                $passwordInfo = $userInfo | Where-Object { $_ -match 'Password expires|contraseña expira|La contraseña caduca' }
                 
-                # Obtener el período máximo de vida de contraseña (en días)
-                $maxPasswordAge = $domainPolicy.maxPwdAge.Value / -864000000000
+                if ($passwordInfo -match '(never|nunca|jamás)') {
+                    Write-Output 'NO_EXPIRY'
+                    exit
+                }
                 
-                # Calcular fecha de expiración
-                $expiryDate = $user.LastPasswordSet.AddDays($maxPasswordAge)
-                $daysRemaining = ($expiryDate - (Get-Date)).Days
-                
-                # Devolver información formateada
-                Write-Output ('EXPIRES|' + $daysRemaining + '|' + $expiryDate.ToString('yyyy-MM-dd'))
+                if ($passwordInfo -match '(\d{2}/\d{2}/\d{4})') {
+                    $dateString = $matches[1]
+                    try {
+                        # Intentar varios formatos
+                        try { $expiryDate = [DateTime]::ParseExact($dateString, 'MM/dd/yyyy', $null) }
+                        catch { $expiryDate = [DateTime]::Parse($dateString) }
+                        
+                        $daysRemaining = ($expiryDate - (Get-Date)).Days
+                        Write-Output ('EXPIRES|' + $daysRemaining + '|' + $expiryDate.ToString('yyyy-MM-dd'))
+                        exit
+                    }
+                    catch {
+                        Write-Output ('ERROR|No se pudo interpretar la fecha: ' + $dateString)
+                        exit
+                    }
+                }
             }
-        } catch {
+            
+            # Si llegamos aquí, probar otro método
+            try {
+                Add-Type -AssemblyName System.DirectoryServices.AccountManagement
+                $context = New-Object System.DirectoryServices.AccountManagement.PrincipalContext('Domain')
+                $user = [System.DirectoryServices.AccountManagement.UserPrincipal]::FindByIdentity($context, $env:USERNAME)
+                
+                if ($user.PasswordNeverExpires) {
+                    Write-Output 'NO_EXPIRY'
+                    exit
+                }
+                
+                if ($user.LastPasswordSet -eq $null) {
+                    Write-Output 'CHANGE_REQUIRED'
+                    exit
+                }
+                
+                # Intentar obtener la política del dominio
+                $domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain()
+                $policy = $domain.GetDirectoryEntry()
+                $maxPwdAge = $policy.Properties['maxPwdAge'].Value
+                
+                if ($maxPwdAge) {
+                    $maxPwdAgeDays = [math]::Abs($maxPwdAge / 864000000000)
+                    $expiryDate = $user.LastPasswordSet.AddDays($maxPwdAgeDays)
+                    $daysRemaining = ($expiryDate - (Get-Date)).Days
+                    Write-Output ('EXPIRES|' + $daysRemaining + '|' + $expiryDate.ToString('yyyy-MM-dd'))
+                    exit
+                }
+            }
+            catch {
+                Write-Output ('ERROR|Error al obtener datos de Active Directory: ' + $_.Exception.Message)
+                exit
+            }
+            
+            # Último recurso: intentar con ADSI
+            try {
+                $root = New-Object DirectoryServices.DirectoryEntry
+                $search = New-Object DirectoryServices.DirectorySearcher($root)
+                $search.Filter = '(&(objectClass=user)(sAMAccountName=' + $env:USERNAME + '))'
+                $result = $search.FindOne()
+                
+                if ($result) {
+                    $user = $result.GetDirectoryEntry()
+                    $pwdLastSet = $user.pwdLastSet.Value
+                    
+                    if ($pwdLastSet -eq 0) {
+                        Write-Output 'CHANGE_REQUIRED'
+                        exit
+                    }
+                    
+                    # Convertir pwdLastSet a fecha
+                    $pwdLastSetDate = [DateTime]::FromFileTime($pwdLastSet)
+                    
+                    # Usar la política obtenida previamente
+                    $policy = net accounts /domain
+                    $maxPwdAgeMatch = $policy | Select-String -Pattern '(Maximum password age|Vigencia máxima).*?(\d+)'
+                    
+                    if ($maxPwdAgeMatch -and $maxPwdAgeMatch.Matches.Groups.Count -gt 2) {
+                        $maxPwdAgeDays = [int]$maxPwdAgeMatch.Matches.Groups[2].Value
+                        $expiryDate = $pwdLastSetDate.AddDays($maxPwdAgeDays)
+                        $daysRemaining = ($expiryDate - (Get-Date)).Days
+                        Write-Output ('EXPIRES|' + $daysRemaining + '|' + $expiryDate.ToString('yyyy-MM-dd'))
+                        exit
+                    }
+                }
+            }
+            catch {
+                Write-Output ('ERROR|Error ADSI: ' + $_.Exception.Message)
+                exit
+            }
+            
+            # Si llegamos aquí, no pudimos determinar nada concreto
+            Write-Output 'EXPIRES_UNKNOWN'
+        }
+        catch {
             Write-Output ('ERROR|' + $_.Exception.Message)
         }
         "
@@ -230,6 +596,8 @@ def password_expiration():
         
         result = subprocess.run(ps_cmd, shell=True, capture_output=True, text=True)
         output = result.stdout.strip()
+        
+        # El resto del código permanece igual
         
         if output.startswith('NO_EXPIRY'):
             return jsonify({
@@ -276,13 +644,72 @@ def password_expiration():
                 "expires": None,
                 "message": "No se pudo determinar la expiración de la contraseña."
             })
-            
-    except Exception as e:
-        print(f"Error obteniendo información de expiración de contraseña: {e}")
+    except Exception as ps_error:
+        print(f"Error en método PowerShell: {ps_error}")
         return jsonify({
             "expires": None,
-            "message": f"Error: {str(e)}"
+            "message": "No se pudo determinar la expiración de la contraseña mediante métodos alternativos."
         })
+
+@app.route('/api/force-password-change', methods=['POST', 'OPTIONS'])
+def force_password_change():
+    if request.method == 'OPTIONS':
+        return '', 200
+        
+    try:
+        # Obtener usuario actual
+        username = getpass.getuser()
+        
+        # Verificar si estamos en un dominio
+        domain_info = subprocess.check_output("wmic computersystem get domain", shell=True).decode().strip()
+        domain_lines = [line.strip() for line in domain_info.split('\n') if line.strip()]
+        domain = domain_lines[1] if len(domain_lines) > 1 else ""
+        is_domain = domain.upper() != "WORKGROUP"
+        
+        if is_domain:
+            # Para equipos en dominio, intentar abrir CTRL+ALT+DEL de forma más directa
+            # Esta es la secuencia más confiable para usuarios de dominio
+            cmd = '''
+            powershell -Command "
+            Add-Type -TypeDefinition @'
+            using System;
+            using System.Runtime.InteropServices;
+            
+            public class NativeMethods {
+                [DllImport(\"user32.dll\")]
+                public static extern void LockWorkStation();
+            }
+            '@
+            
+            # Bloquear la estación de trabajo (primer paso de Ctrl+Alt+Del)
+            [NativeMethods]::LockWorkStation()
+            "
+            '''
+            subprocess.Popen(cmd, shell=True)
+            
+            # Mensaje específico para cambio de contraseña solicitado por la organización
+            return jsonify({
+                "success": True, 
+                "message": "Por motivos de seguridad, su organización requiere que cambie su contraseña. Se ha bloqueado la pantalla. Por favor, presione Ctrl+Alt+Supr y seleccione 'Cambiar una contraseña'.",
+                "isOrganizationRequest": True
+            })
+        else:
+            # Para equipos locales, intentar métodos alternativos
+            # 1. Intenta abrir directamente el diálogo de cuentas de usuario
+            subprocess.Popen('control userpasswords2', shell=True)
+            
+            return jsonify({
+                "success": True, 
+                "message": "Por motivos de seguridad, se recomienda cambiar su contraseña. Se ha abierto el panel de control de contraseñas.",
+                "isOrganizationRequest": True
+            })
+            
+    except Exception as e:
+        print(f"Error al forzar cambio de contraseña: {str(e)}")
+        return jsonify({
+            "success": False, 
+            "message": f"Error al iniciar el proceso de cambio de contraseña: {str(e)}"
+        }), 500
         
 @app.route("/api/user-info", methods=["GET", "OPTIONS"])
 def user_info():
@@ -486,6 +913,276 @@ def system_info():
         "network_interfaces": interfaces,
         **sys_details
     })
+    
+@app.route("/api/user-details", methods=["GET", "OPTIONS"])
+def get_user_details():
+    if request.method == 'OPTIONS':
+        return '', 200
+        
+    try:
+        # Obtener usuario actual
+        username = getpass.getuser()
+        
+        # Determinar si estamos en un dominio
+        domain_info = subprocess.check_output("wmic computersystem get domain", shell=True).decode().strip()
+        domain_lines = [line.strip() for line in domain_info.split('\n') if line.strip()]
+        domain = domain_lines[1] if len(domain_lines) > 1 else ""
+        is_domain = domain.upper() != "WORKGROUP"
+        
+        user_details = {}
+        
+        if is_domain:
+            # Para usuarios de dominio, ejecutar net user con /domain
+            try:
+                cmd = f"net user {username} /domain"
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+                
+                if result.returncode == 0:
+                    output = result.stdout
+                    user_details["isDomain"] = True
+                    user_details["domain"] = domain
+                    
+                    # Extraer información clave del output
+                    patterns = {
+                        "username": r"User name\s+(.+)",
+                        "fullName": r"Full Name\s+(.+)",
+                        "accountActive": r"Account active\s+(.+)",
+                        "accountExpires": r"Account expires\s+(.+)",
+                        "passwordLastSet": r"Password last set\s+(.+)",
+                        "passwordExpires": r"Password expires\s+(.+)",
+                        "passwordChangeable": r"Password changeable\s+(.+)",
+                        "passwordRequired": r"Password required\s+(.+)",
+                        "userMayChangePassword": r"User may change password\s+(.+)",
+                        "lastLogon": r"Last logon\s+(.+)",
+                        "workstationsAllowed": r"Workstations allowed\s+(.+)",
+                        "logonScript": r"Logon script\s+(.+)",
+                        "userProfile": r"User profile\s+(.+)",
+                        "homeDirectory": r"Home directory\s+(.+)",
+                        "logonHoursAllowed": r"Logon hours allowed\s+(.+)",
+                    }
+                    
+                    # También patrones para versión en español
+                    es_patterns = {
+                        "username": r"Nombre de usuario\s+(.+)",
+                        "fullName": r"Nombre completo\s+(.+)",
+                        "accountActive": r"Cuenta activa\s+(.+)",
+                        "accountExpires": r"La cuenta caduca\s+(.+)",
+                        "passwordLastSet": r"Último cambio de contraseña\s+(.+)",
+                        "passwordExpires": r"La contraseña caduca\s+(.+)",
+                        "passwordChangeable": r"Contraseña modificable\s+(.+)",
+                        "passwordRequired": r"Se requiere contraseña\s+(.+)",
+                        "userMayChangePassword": r"El usuario puede cambiar la contraseña\s+(.+)",
+                        "lastLogon": r"Última sesión\s+(.+)",
+                        "workstationsAllowed": r"Estaciones de trabajo permitidas\s+(.+)",
+                        "logonScript": r"Script de inicio de sesión\s+(.+)",
+                        "userProfile": r"Perfil de usuario\s+(.+)",
+                        "homeDirectory": r"Directorio principal\s+(.+)",
+                        "logonHoursAllowed": r"Horas de inicio de sesión permitidas\s+(.+)",
+                    }
+                    
+                    # Combinar patrones para detectar en ambos idiomas
+                    all_patterns = {}
+                    for key in patterns:
+                        all_patterns[key] = f"({patterns[key]}|{es_patterns.get(key, '')})"
+                    
+                    # Extraer cada campo
+                    for key, pattern in all_patterns.items():
+                        match = re.search(pattern, output, re.IGNORECASE)
+                        if match:
+                            value = match.group(1).strip()
+                            if '\\' in value and len(value) > 1:
+                                value = value.split('\\')[1]  # Eliminar prefijo de dominio si existe
+                            user_details[key] = value
+                    
+                    # Extraer membresías de grupos
+                    groups = []
+                    group_section = re.findall(r"Global Group memberships\s+(.+?)(?=The command completed|\Z)", 
+                                              output, re.DOTALL | re.IGNORECASE)
+                    
+                    if group_section:
+                        group_text = group_section[0]
+                        group_lines = [line.strip() for line in group_text.split('\n') if line.strip()]
+                        for line in group_lines:
+                            # Extraer grupos, pueden estar separados por espacios y *
+                            line_groups = re.findall(r"\*([^*]+)", line)
+                            for group in line_groups:
+                                clean_group = group.strip()
+                                if clean_group:
+                                    groups.append(clean_group)
+                    
+                    user_details["groups"] = groups
+                    
+                    # Analizar fechas de contraseña para calcular días restantes
+                    if "passwordExpires" in user_details and "Never" not in user_details["passwordExpires"] and "nunca" not in user_details["passwordExpires"].lower():
+                        try:
+                            import datetime
+                            # Intentar diferentes formatos de fecha
+                            date_formats = [
+                                "%m/%d/%Y %I:%M:%S %p", "%d/%m/%Y %I:%M:%S %p",
+                                "%m/%d/%Y %H:%M:%S", "%d/%m/%Y %H:%M:%S",
+                                "%m/%d/%Y", "%d/%m/%Y"
+                            ]
+                            
+                            expiry_date = None
+                            for fmt in date_formats:
+                                try:
+                                    expiry_date = datetime.datetime.strptime(user_details["passwordExpires"], fmt)
+                                    break
+                                except ValueError:
+                                    continue
+                            
+                            if expiry_date:
+                                today = datetime.datetime.now()
+                                delta = expiry_date - today
+                                user_details["passwordExpiresInDays"] = delta.days
+                                user_details["passwordStatus"] = (
+                                    "expired" if delta.days < 0 else
+                                    "warning" if delta.days < 7 else
+                                    "ok"
+                                )
+                        except Exception as date_error:
+                            print(f"Error procesando fecha: {date_error}")
+                    else:
+                        user_details["passwordExpiresInDays"] = None
+                        user_details["passwordStatus"] = "neverExpires"
+                
+                else:
+                    # Si no se pudo obtener info del dominio, intentar con usuario local
+                    print(f"Error obteniendo detalles de usuario de dominio: {result.stderr}")
+                    is_domain = False
+            
+            except Exception as domain_error:
+                print(f"Error procesando información de dominio: {domain_error}")
+                is_domain = False
+        
+        # Si no es usuario de dominio o falló la consulta de dominio, intentar con usuario local
+        if not is_domain:
+            try:
+                cmd = f"net user {username}"
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+                
+                if result.returncode == 0:
+                    output = result.stdout
+                    user_details["isDomain"] = False
+                    user_details["domain"] = "Local"
+                    
+                    # Usar los mismos patrones que antes para extraer la información
+                    patterns = {
+                        "username": r"User name\s+(.+)",
+                        "fullName": r"Full Name\s+(.+)",
+                        "accountActive": r"Account active\s+(.+)",
+                        "accountExpires": r"Account expires\s+(.+)",
+                        "passwordLastSet": r"Password last set\s+(.+)",
+                        "passwordExpires": r"Password expires\s+(.+)",
+                        "passwordChangeable": r"Password changeable\s+(.+)",
+                        "passwordRequired": r"Password required\s+(.+)",
+                        "userMayChangePassword": r"User may change password\s+(.+)",
+                        "lastLogon": r"Last logon\s+(.+)",
+                    }
+                    
+                    # También patrones para versión en español
+                    es_patterns = {
+                        "username": r"Nombre de usuario\s+(.+)",
+                        "fullName": r"Nombre completo\s+(.+)",
+                        "accountActive": r"Cuenta activa\s+(.+)",
+                        "accountExpires": r"La cuenta caduca\s+(.+)",
+                        "passwordLastSet": r"Último cambio de contraseña\s+(.+)",
+                        "passwordExpires": r"La contraseña caduca\s+(.+)",
+                        "passwordChangeable": r"Contraseña modificable\s+(.+)",
+                        "passwordRequired": r"Se requiere contraseña\s+(.+)",
+                        "userMayChangePassword": r"El usuario puede cambiar la contraseña\s+(.+)",
+                        "lastLogon": r"Última sesión\s+(.+)",
+                    }
+                    
+                    # Combinar patrones para detectar en ambos idiomas
+                    all_patterns = {}
+                    for key in patterns:
+                        all_patterns[key] = f"({patterns[key]}|{es_patterns.get(key, '')})"
+                    
+                    # Extraer cada campo
+                    for key, pattern in all_patterns.items():
+                        match = re.search(pattern, output, re.IGNORECASE)
+                        if match:
+                            user_details[key] = match.group(1).strip()
+                    
+                    # Extraer membresías de grupos locales
+                    groups = []
+                    group_section = re.findall(r"Local Group Memberships\s+(.+?)(?=The command completed|\Z)", 
+                                              output, re.DOTALL | re.IGNORECASE)
+                    
+                    if group_section:
+                        group_text = group_section[0]
+                        group_lines = [line.strip() for line in group_text.split('\n') if line.strip()]
+                        for line in group_lines:
+                            # Extraer grupos, pueden estar separados por espacios y *
+                            line_groups = re.findall(r"\*([^*]+)", line)
+                            for group in line_groups:
+                                clean_group = group.strip()
+                                if clean_group:
+                                    groups.append(clean_group)
+                    
+                    user_details["groups"] = groups
+                    
+                    # Analizar fechas para calcular días restantes
+                    if "passwordExpires" in user_details and "Never" not in user_details["passwordExpires"] and "nunca" not in user_details["passwordExpires"].lower():
+                        try:
+                            import datetime
+                            # Intentar diferentes formatos de fecha
+                            date_formats = [
+                                "%m/%d/%Y %I:%M:%S %p", "%d/%m/%Y %I:%M:%S %p",
+                                "%m/%d/%Y %H:%M:%S", "%d/%m/%Y %H:%M:%S",
+                                "%m/%d/%Y", "%d/%m/%Y"
+                            ]
+                            
+                            expiry_date = None
+                            for fmt in date_formats:
+                                try:
+                                    expiry_date = datetime.datetime.strptime(user_details["passwordExpires"], fmt)
+                                    break
+                                except ValueError:
+                                    continue
+                            
+                            if expiry_date:
+                                today = datetime.datetime.now()
+                                delta = expiry_date - today
+                                user_details["passwordExpiresInDays"] = delta.days
+                                user_details["passwordStatus"] = (
+                                    "expired" if delta.days < 0 else
+                                    "warning" if delta.days < 7 else
+                                    "ok"
+                                )
+                        except Exception as date_error:
+                            print(f"Error procesando fecha: {date_error}")
+                    else:
+                        user_details["passwordExpiresInDays"] = None
+                        user_details["passwordStatus"] = "neverExpires"
+                else:
+                    return jsonify({
+                        "success": False,
+                        "message": "No se pudo obtener información del usuario",
+                        "error": result.stderr
+                    }), 400
+                    
+            except Exception as local_error:
+                print(f"Error obteniendo detalles de usuario local: {local_error}")
+                return jsonify({
+                    "success": False,
+                    "message": "Error al obtener detalles del usuario",
+                    "error": str(local_error)
+                }), 500
+        
+        return jsonify({
+            "success": True,
+            "userDetails": user_details
+        })
+        
+    except Exception as e:
+        print(f"Error general obteniendo detalles de usuario: {e}")
+        return jsonify({
+            "success": False,
+            "message": "Error general al obtener detalles del usuario",
+            "error": str(e)
+        }), 500
 
 @app.route('/api/open-password-dialog', methods=['POST', 'OPTIONS'])
 def open_password_dialog():
@@ -500,19 +1197,22 @@ def open_password_dialog():
         is_domain = domain.upper() != "WORKGROUP"
         
         if is_domain:
-            # Para equipos en dominio, simplemente bloquear la pantalla
+            # Para equipos en dominio, intentar abrir CTRL+ALT+DEL mediante bloqueo de pantalla
             ctypes.windll.user32.LockWorkStation()
             return jsonify({
                 "success": True, 
                 "message": "Se ha bloqueado la pantalla. Presione Ctrl+Alt+Supr y seleccione 'Cambiar una contraseña'"
             })
         else:
-            # Para equipos no en dominio
+            # Para equipos no en dominio, abrir el panel de control de cuentas de usuario
             subprocess.Popen('control userpasswords2', shell=True)
-            return jsonify({"success": True, "message": "Panel de control de contraseñas abierto"})
+            return jsonify({
+                "success": True, 
+                "message": "Panel de control de contraseñas abierto"
+            })
             
     except Exception as e:
-        print(f"Error al abrir configuración: {str(e)}")
+        print(f"Error al abrir panel de contraseñas: {str(e)}")
         return jsonify({"success": False, "message": str(e)}), 500
 
 @app.route("/api/change-password", methods=["POST"])
