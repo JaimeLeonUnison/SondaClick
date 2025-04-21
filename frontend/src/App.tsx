@@ -137,40 +137,6 @@ function App(): React.ReactElement {
     }
   };
 
-  // En App.tsx o donde usas el componente
-  const openWindowsSettings = async (): Promise<void> => {
-    try {
-      const response = await fetch(
-        "http://localhost:5000/api/open-windows-settings",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ setting: "accounts" })
-        }
-      );
-      
-      // Manejar la respuesta
-      const data = await response.json();
-      if (!response.ok) {
-        console.error(
-          "Error al abrir la configuración de Windows:",
-          data.message
-        );
-        // Opcional: Mostrar error al usuario
-        alert(`Error: ${data.message}`);
-      } else {
-        // Opcional: Mostrar confirmación al usuario
-        console.log("Configuración de Windows abierta:", data.message);
-      }
-    } catch (error) {
-      console.error("Error al conectar con el servidor:", error);
-      // Opcional: Mostrar error al usuario
-      alert("No se pudo conectar con el servidor. Verifica que el backend esté en ejecución.");
-    }
-  };
-
   const openNativePasswordChange = async (): Promise<void> => {
     try {
       const response = await fetch(
@@ -216,9 +182,11 @@ function App(): React.ReactElement {
             <PasswordChangeButton
               useNativeDialog={false}
               changePassword={changePassword} // Añadir esta línea
-              onNativeDialogClick={openWindowsSettings}
+              onNativeDialogClick={openNativePasswordChange}
+              showUserInfo={true}
               buttonText="Cambiar contraseña (Windows)"
               className="bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg transition-colors"
+              domainName={info.domain}
             />
             <Example onClick={openTeamsApp}>
               Levantar ticket con soporte

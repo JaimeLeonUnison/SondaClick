@@ -8,6 +8,13 @@ interface PasswordChangeModalProps {
     oldPassword: string,
     newPassword: string
   ) => Promise<string>;
+  passwordInfo?: {
+    passwordLastSet: string;
+    passwordExpires: string;
+    userMayChangePassword: string;
+  } | null;
+  userDomain?: string;
+  loading?: boolean;
 }
 
 interface PasswordExpirationInfo {
@@ -20,9 +27,11 @@ interface PasswordExpirationInfo {
 const PasswordChangeModal: React.FC<PasswordChangeModalProps> = ({
   isOpen,
   onClose,
+  passwordInfo,
+  userDomain,
+  loading = false
 }) => {
   const [expirationInfo, setExpirationInfo] = useState<PasswordExpirationInfo | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>("");
   const [isDomainUser, setIsDomainUser] = useState<boolean>(false);
   const modalRef = useRef<HTMLDivElement>(null);
@@ -47,67 +56,55 @@ const PasswordChangeModal: React.FC<PasswordChangeModalProps> = ({
     };
   }, [isOpen, onClose]);
 
-  // Cargar información de expiración al abrir el modal
+  // Configurar información de dominio y expiración
   useEffect(() => {
     if (isOpen) {
-      const fetchExpirationInfo = async () => {
-        try {
-          setLoading(true);
-          setError("");
-          
-          // Verificar si el usuario es de dominio
-          try {
-            const userResponse = await fetch("http://localhost:5000/api/user-info");
-            const userData = await userResponse.json();
-            setIsDomainUser(userData.isDomainUser || false);
-          } catch (error) {
-            console.error("Error al verificar tipo de usuario:", error);
-            setIsDomainUser(false);
-          }
-
-          // Obtener información de expiración
-          try {
-            const expiryResponse = await fetch("http://localhost:5000/api/password-expiration");
-            const expiryData = await expiryResponse.json();
-            setExpirationInfo(expiryData);
-          } catch (error) {
-            console.error("Error al obtener expiración:", error);
-            setError("No se pudo obtener la información de expiración de contraseña");
-          }
-        } catch (error) {
-          console.error("Error al obtener información inicial:", error);
-          setError("Error al cargar la información");
-        } finally {
-          setLoading(false);
-        }
-      };
-
-      fetchExpirationInfo();
-    }
-  }, [isOpen]);
-
-  // Función para abrir el diálogo nativo de Windows
-  const openNativeDialog = async () => {
-    try {
-      setError("");
+      // Determinar si es usuario de dominio
+      setIsDomainUser(!!userDomain && userDomain !== "Windows" && userDomain !== "Local");
       
-      const response = await fetch("http://localhost:5000/api/open-password-dialog", {
-        method: "POST"
-      });
-
-      const data = await response.json();
-
-      if (!data.success) {
-        setError(data.message || "No se pudo abrir el diálogo de Windows");
-      } else {
-        // Cerrar nuestro modal después de un momento
-        setTimeout(() => onClose(), 1500);
+      // Crear información de expiración a partir de passwordInfo
+      if (passwordInfo) {
+        try {
+          const expiryDate = passwordInfo.passwordExpires;
+          let daysRemaining: number | undefined = undefined;
+          
+          // Intentar calcular días restantes si tiene formato de fecha
+          try {
+            const expDate = new Date(expiryDate);
+            const today = new Date();
+            const diffTime = expDate.getTime() - today.getTime();
+            daysRemaining = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+          } catch (e) {
+            console.error("Error calculando días restantes", e);
+          }
+          
+          // Generar mensaje adecuado
+          let message = "";
+          if (daysRemaining !== undefined) {
+            if (daysRemaining <= 0) {
+              message = "Tu contraseña ha expirado. Debes cambiarla ahora.";
+            } else if (daysRemaining <= 5) {
+              message = `Tu contraseña expirará pronto (en ${daysRemaining} días).`;
+            } else {
+              message = `Tu contraseña expirará en ${daysRemaining} días.`;
+            }
+          } else {
+            message = `Fecha de expiración: ${expiryDate}`;
+          }
+          
+          setExpirationInfo({
+            expires: true,
+            daysRemaining,
+            expiryDate,
+            message
+          });
+        } catch (error) {
+          console.error("Error procesando información de contraseña:", error);
+          setError("No se pudo procesar la información de expiración");
+        }
       }
-    } catch (err) {
-      setError("Error al abrir el diálogo nativo de Windows");
-      console.error("Error al abrir diálogo:", err);
     }
-  };
+  }, [isOpen, passwordInfo, userDomain]);
 
   if (!isOpen) return null;
 
@@ -151,10 +148,10 @@ const PasswordChangeModal: React.FC<PasswordChangeModalProps> = ({
 
             {/* Información de tipo de cuenta */}
             <div className="mt-1 text-sm text-gray-500">
-              Cuenta {isDomainUser ? 'de dominio' : 'local'}
+              {userDomain ? `Dominio: ${userDomain}` : "Cuenta local"}
             </div>
 
-            {/* Información de expiración */}
+            {/* Información detallada de la contraseña */}
             {loading ? (
               <div className="mt-4 text-center">
                 <svg className="animate-spin h-5 w-5 mx-auto text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -167,7 +164,29 @@ const PasswordChangeModal: React.FC<PasswordChangeModalProps> = ({
               <div className="mt-4 bg-red-100 border border-red-400 text-red-700 px-3 py-2 rounded text-sm">
                 {error}
               </div>
-            ) : expirationInfo && (
+            ) : passwordInfo ? (
+              <div className="mt-4 bg-white border border-gray-200 rounded-md p-4">
+                <div className="space-y-3 text-sm text-left">
+                  <div className="grid grid-cols-2 gap-x-2 items-center">
+                    <div className="text-gray-600 font-medium">Último cambio:</div>
+                    <div>{passwordInfo.passwordLastSet}</div>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-x-2 items-center">
+                    <div className="text-gray-600 font-medium">Expira el:</div>
+                    <div>{passwordInfo.passwordExpires}</div>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-x-2 items-center">
+                    <div className="text-gray-600 font-medium">Puede cambiar:</div>
+                    <div>{passwordInfo.userMayChangePassword}</div>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {/* Estado de expiración */}
+            {expirationInfo && (
               <div className={`mt-4 p-3 rounded-md text-sm ${
                 expirationInfo.expires && expirationInfo.daysRemaining !== undefined && expirationInfo.daysRemaining <= 5 
                   ? 'bg-red-100 text-red-800 border border-red-200' 
@@ -187,9 +206,6 @@ const PasswordChangeModal: React.FC<PasswordChangeModalProps> = ({
                   </div>
                   <div className="ml-3 text-left">
                     <p className="font-medium">{expirationInfo.message}</p>
-                    {expirationInfo.expiryDate && (
-                      <p className="mt-1 text-xs">Fecha de expiración: {expirationInfo.expiryDate}</p>
-                    )}
                   </div>
                 </div>
               </div>
@@ -237,22 +253,8 @@ const PasswordChangeModal: React.FC<PasswordChangeModalProps> = ({
               </div>
             </div>
 
-            {/* Botón de acción rápida */}
-            <div className="mt-5">
-              <button
-                onClick={openNativeDialog}
-                className="w-full flex items-center justify-center px-4 py-2 text-sm font-medium text-white bg-indigo-600 border border-transparent rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                type="button"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-                Abrir diálogo de cambio de contraseña
-              </button>
-            </div>
-
             {/* Botón para cerrar */}
-            <div className="mt-3">
+            <div className="mt-6">
               <button
                 type="button"
                 onClick={onClose}
