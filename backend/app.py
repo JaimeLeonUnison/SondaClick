@@ -1,5 +1,6 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from dotenv import load_dotenv
 import psutil
 import socket
 import requests
@@ -11,9 +12,189 @@ import uuid
 import ctypes
 import re
 import os
+import pymysql
 
 app = Flask(__name__)
 CORS(app)  # Permite que el frontend (React) haga peticiones
+
+#Cargar variables de entorno desde el archivo .env
+load_dotenv()
+
+def get_connection():
+    """
+    Obtiene una conexión a la base de datos usando credenciales seguras
+    desde variables de entorno
+    """
+    try:
+        connection = pymysql.connect(
+            host=os.getenv('DB_HOST', 'localhost'),
+            user=os.getenv('DB_USER', 'root'),
+            password=os.getenv('DB_PASSWORD', ''),
+            database=os.getenv('DB_NAME', 'prueba'),
+            port=int(os.getenv('DB_PORT', 3306))
+        )
+        return connection
+    except Exception as e:
+        print(f"Error al conectar a la base de datos: {e}")
+        return None
+
+def execute_query(query, params=None, fetch=False):
+    """
+    Ejecuta una consulta SQL con los parámetros proporcionados
+    
+    Args:
+        query (str): Consulta SQL
+        params (tuple): Parámetros para la consulta
+        fetch (bool): Indica si se deben devolver resultados
+        
+    Returns:
+        list/None: Resultados de la consulta o None si hay un error
+    """
+    connection = get_connection()
+    if not connection:
+        return None
+        
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(query, params)
+            
+            if fetch:
+                result = cursor.fetchall()
+            else:
+                connection.commit()
+                result = True
+                
+        return result
+    except Exception as e:
+        print(f"Error al ejecutar la consulta: {e}")
+        return None
+    finally:
+        connection.close()
+
+def execute_procedure(procedure_name, params=None):
+    """
+    Ejecuta un procedimiento almacenado con los parámetros proporcionados
+    
+    Args:
+        procedure_name (str): Nombre del procedimiento
+        params (tuple): Parámetros para el procedimiento
+        
+    Returns:
+        bool: True si se ejecutó correctamente, False en caso contrario
+    """
+    connection = get_connection()
+    if not connection:
+        return False
+        
+    try:
+        with connection.cursor() as cursor:
+            cursor.callproc(procedure_name, params)
+            connection.commit()
+        return True
+    except Exception as e:
+        print(f"Error al ejecutar el procedimiento {procedure_name}: {e}")
+        return False
+    finally:
+        connection.close()
+
+# Ejemplo de función específica para guardar datos de monitoreo del sistema
+def save_system_info(hostname, cpu_percent, memory_percent, disk_percent, temperatures):
+    """
+    Guarda información del sistema en la base de datos utilizando el stored procedure Sp_CreaIncidente
+    SOLO cuando se detecten condiciones críticas según los umbrales configurados en variables de entorno
+    """
+    try:
+        # Extraer temperaturas específicas si están disponibles
+        cpu_temp = temperatures.get('cpu', None)
+        
+        # Obtener umbrales desde variables de entorno o usar valores predeterminados
+        cpu_threshold = float(os.getenv('CRITICAL_CPU_THRESHOLD', 90))
+        temp_threshold = float(os.getenv('CRITICAL_TEMP_THRESHOLD', 90))
+        memory_threshold = float(os.getenv('CRITICAL_MEMORY_THRESHOLD', 90))
+        
+        # Verificar si se cumplen las condiciones críticas para guardar en BD
+        is_critical = False
+        critical_reason = []
+        
+        # Verificar CPU
+        if cpu_percent >= cpu_threshold:
+            is_critical = True
+            critical_reason.append(f"CPU al {cpu_percent}% (umbral: {cpu_threshold}%)")
+            
+        # Verificar Temperatura CPU
+        if cpu_temp is not None and cpu_temp >= temp_threshold:
+            is_critical = True
+            critical_reason.append(f"Temperatura CPU: {cpu_temp}°C (umbral: {temp_threshold}°C)")
+            
+        # Verificar Memoria RAM
+        if memory_percent >= memory_threshold:
+            is_critical = True
+            critical_reason.append(f"Memoria RAM al {memory_percent}% (umbral: {memory_threshold}%)")
+        
+        # Solo guardar si se detecta una condición crítica
+        if is_critical:
+            # Registrar en el log la razón
+            print(f"⚠️ Condición crítica detectada: {', '.join(critical_reason)}. Guardando en base de datos.")
+            
+            # Obtener el número de serie
+            serial_number = get_serial_number()
+            
+            # Obtener la fecha actual
+            from datetime import datetime
+            current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            # Definir parámetros para el stored procedure según su orden:
+            # HostName, NumeroSerie, UsoCPU, UsoMemoria, UsoHD, Temperatura, FechaIncidente
+            params = (
+                hostname,               # HostName
+                serial_number,          # NumeroSerie
+                cpu_percent,            # UsoCPU
+                memory_percent,         # UsoMemoria
+                disk_percent,           # UsoHD
+                cpu_temp,               # Temperatura
+                current_date            # FechaIncidente
+            )
+            
+            # Ejecutar el procedimiento almacenado
+            result = execute_procedure("Sp_CreaIncidente", params)
+            
+            if not result:
+                print("Error al ejecutar el stored procedure Sp_CreaIncidente")
+            
+            return result
+        else:
+            # No se detectó condición crítica, no guardamos en la BD
+            return True
+            
+    except Exception as e:
+        print(f"Error guardando información del sistema: {e}")
+        return False
+            
+        print("✅ Conexión a la base de datos establecida correctamente")
+        
+        # Verificar si el stored procedure existe
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                SELECT ROUTINE_NAME 
+                FROM INFORMATION_SCHEMA.ROUTINES 
+                WHERE ROUTINE_TYPE = 'PROCEDURE' 
+                AND ROUTINE_NAME = 'Sp_CreaIncidente'
+                """)
+                result = cursor.fetchone()
+                
+                if result:
+                    print(f"✅ Stored procedure 'Sp_CreaIncidente' encontrado")
+                else:
+                    print(f"⚠️ ADVERTENCIA: El stored procedure 'Sp_CreaIncidente' no existe en la base de datos")
+        except Exception as e:
+            print(f"⚠️ Error al verificar stored procedure: {e}")
+            
+        connection.close()
+        return True
+    except Exception as e:
+        print(f"⚠️ Error inicializando la base de datos: {e}")
+        return False
 
 def get_system_details():
     try:
@@ -390,7 +571,7 @@ def password_expiration():
                         password_expires_line = line
                         break
                 
-                if password_expires_line:
+                if (password_expires_line):
                     # Extraer la fecha de expiración
                     parts = password_expires_line.split(':', 1)
                     if len(parts) > 1:
@@ -897,20 +1078,59 @@ def system_info():
     sys_details = get_system_details()
     temps = get_system_temperatures()
     interfaces = get_network_interfaces()
+    hostname = get_hostname()
+    cpu_percent = psutil.cpu_percent(interval=1)
+    memory = psutil.virtual_memory()
+    disk = get_disk_usage()
+    
+    # Obtener umbrales desde variables de entorno
+    cpu_threshold = float(os.getenv('CRITICAL_CPU_THRESHOLD', 90))
+    temp_threshold = float(os.getenv('CRITICAL_TEMP_THRESHOLD', 90))
+    memory_threshold = float(os.getenv('CRITICAL_MEMORY_THRESHOLD', 90))
+    
+    # Verificar condiciones críticas
+    critical_conditions = []
+    if cpu_percent >= cpu_threshold:
+        critical_conditions.append(f"CPU al {cpu_percent}% (umbral: {cpu_threshold}%)")
+    
+    cpu_temp = temps.get('cpu', None)
+    if cpu_temp is not None and cpu_temp >= temp_threshold:
+        critical_conditions.append(f"Temperatura CPU: {cpu_temp}°C (umbral: {temp_threshold}°C)")
+    
+    if memory.percent >= memory_threshold:
+        critical_conditions.append(f"Memoria RAM al {memory.percent}% (umbral: {memory_threshold}%)")
+    
+    # Guardar información en la base de datos si hay condiciones críticas
+    saved_to_db = False
+    if critical_conditions:
+        saved_to_db = save_system_info(
+            hostname=hostname,
+            cpu_percent=cpu_percent,
+            memory_percent=memory.percent,
+            disk_percent=disk["percent"],
+            temperatures=temps
+        )
 
     return jsonify({
         "user": getpass.getuser(),
-        "hostname": get_hostname(),
-        "cpu_percent": psutil.cpu_percent(interval=1),
-        "memory": psutil.virtual_memory()._asdict(),
+        "hostname": hostname,
+        "cpu_percent": cpu_percent,
+        "memory": memory._asdict(),
         "cpu_speed": get_cpu_speed(),
         "temperatures": temps,
         "gpu_temp": get_gpu_temp(),
         "ip_local": get_local_ip(),
         "ip_public": get_public_ip(),
-        "disk_usage": get_disk_usage(),
+        "disk_usage": disk,
         "serial_number": get_serial_number(),
         "network_interfaces": interfaces,
+        "critical_conditions": critical_conditions,
+        "saved_to_database": saved_to_db and len(critical_conditions) > 0,
+        "thresholds": {
+            "cpu": cpu_threshold,
+            "temperature": temp_threshold,
+            "memory": memory_threshold
+        },
         **sys_details
     })
     
@@ -1261,5 +1481,89 @@ def handle_exception(e):
         "message": "Error interno del servidor"
     }), 500
 
+def init_database():
+    """
+    Inicializa la conexión a la base de datos y verifica los recursos necesarios
+    como procedimientos almacenados y tablas.
+    """
+    try:
+        print("Iniciando conexión a la base de datos...")
+        connection = get_connection()
+        
+        if not connection:
+            print("⚠️ No se pudo establecer conexión a la base de datos.")
+            return False
+            
+        print("✅ Conexión a la base de datos establecida correctamente")
+        
+        # Verificar si el stored procedure existe
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                SELECT ROUTINE_NAME 
+                FROM INFORMATION_SCHEMA.ROUTINES 
+                WHERE ROUTINE_TYPE = 'PROCEDURE' 
+                AND ROUTINE_NAME = 'Sp_CreaIncidente'
+                """)
+                result = cursor.fetchone()
+                
+                if result:
+                    print(f"✅ Stored procedure 'Sp_CreaIncidente' encontrado")
+                else:
+                    print(f"⚠️ ADVERTENCIA: El stored procedure 'Sp_CreaIncidente' no existe en la base de datos")
+                    
+                    # Verificar si existe la tabla para incidentes
+                    cursor.execute("""
+                    SELECT TABLE_NAME 
+                    FROM INFORMATION_SCHEMA.TABLES 
+                    WHERE TABLE_NAME = 'Incidentes'
+                    """)
+                    table_exists = cursor.fetchone()
+                    
+                    if not table_exists:
+                        print("⚠️ La tabla 'Incidentes' no existe. Creando tabla...")
+                        cursor.execute("""
+                        CREATE TABLE Incidentes (
+                            ID INT AUTO_INCREMENT PRIMARY KEY,
+                            HostName VARCHAR(255),
+                            NumeroSerie VARCHAR(255),
+                            UsoCPU FLOAT,
+                            UsoMemoria FLOAT,
+                            UsoHD FLOAT,
+                            Temperatura FLOAT,
+                            FechaIncidente DATETIME
+                        )
+                        """)
+                        connection.commit()
+                        print("✅ Tabla 'Incidentes' creada correctamente")
+                    
+                    print("⚠️ El stored procedure 'Sp_CreaIncidente' no existe. Creando procedimiento...")
+                    cursor.execute("""
+                    CREATE PROCEDURE Sp_CreaIncidente(
+                        IN p_HostName VARCHAR(255),
+                        IN p_NumeroSerie VARCHAR(255),
+                        IN p_UsoCPU FLOAT,
+                        IN p_UsoMemoria FLOAT,
+                        IN p_UsoHD FLOAT,
+                        IN p_Temperatura FLOAT,
+                        IN p_FechaIncidente DATETIME
+                    )
+                    BEGIN
+                        INSERT INTO Incidentes(HostName, NumeroSerie, UsoCPU, UsoMemoria, UsoHD, Temperatura, FechaIncidente)
+                        VALUES(p_HostName, p_NumeroSerie, p_UsoCPU, p_UsoMemoria, p_UsoHD, p_Temperatura, p_FechaIncidente);
+                    END
+                    """)
+                    connection.commit()
+                    print("✅ Stored procedure 'Sp_CreaIncidente' creado correctamente")
+        except Exception as e:
+            print(f"⚠️ Error al verificar/crear recursos de base de datos: {e}")
+            
+        connection.close()
+        return True
+    except Exception as e:
+        print(f"⚠️ Error inicializando la base de datos: {e}")
+        return False
+
 if __name__ == "__main__":
+    init_database()
     app.run(debug=True)
