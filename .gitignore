@@ -7,6 +7,13 @@ yarn-error.log*
 lerna-debug.log*
 .pnpm-debug.log*
 
+# Build outputs and installers
+*.exe
+*.msi
+frontend/release/
+frontend/SondaClickMX-win32-x64/
+windows_installer/
+
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
