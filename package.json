@@ -1,0 +1,13 @@
+{
+  "name": "sondaclick",
+  "version": "1.0.0",
+  "description": "Aplicación SondaClickMX",
+  "main": "build_installer.js",
+  "scripts": {
+    "build-msi": "node build_installer.js"
+  },
+  "devDependencies": {
+    "electron-builder": "^24.13.3",
+    "electron-wix-msi": "^5.1.3"
+  }
+}
