@@ -1,35 +1,45 @@
+// Versión limpia sin problemas de módulos
 import { app, BrowserWindow } from 'electron';
-import * as path from 'path';
+import path from 'path';
+import fs from 'fs';
+import process from 'process';
 
-// The built directory structure
-//
-// ├─┬─┬ dist
-// │ │ └── index.html
-// │ │
-// │ ├─┬ dist-electron
-// │ │ ├── main.js
-// │ │ └── preload.js
-
+// Configuración de directorios (usando __dirname que ya está disponible en CommonJS)
+const __dirname = path.dirname(new URL(import.meta.url).pathname);
 const APP_ROOT = path.join(__dirname, '..');
-const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
+const VITE_DEV_SERVER_URL = import.meta.env.VITE_DEV_SERVER_URL;
 const MAIN_DIST = path.join(APP_ROOT, 'dist-electron');
 const RENDERER_DIST = path.join(APP_ROOT, 'dist');
 
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(APP_ROOT, 'public') : RENDERER_DIST;
 
-let win: BrowserWindow | null = null;
+// Variable global para la ventana
+let win = null;
 
 function createWindow() {
   win = new BrowserWindow({
     width: 1200,
     height: 800,
+    // Usar ruta absoluta para el ícono
     icon: path.join(APP_ROOT, 'public', 'icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
-      nodeIntegration: false,
+      nodeIntegration: true,
       contextIsolation: true
-    },
+    }
   });
+
+  // Establecer el ícono explícitamente para Windows
+  if (process.platform === 'win32') {
+    try {
+      const iconPath = path.join(APP_ROOT, 'public', 'icon.ico');
+      console.log('Cargando ícono desde:', iconPath);
+      console.log('El ícono existe:', fs.existsSync(iconPath));
+      win.setIcon(iconPath);
+    } catch (error) {
+      console.error('Error al establecer el ícono:', error);
+    }
+  }
 
   // Test active push message to Renderer-process.
   win.webContents.on('did-finish-load', () => {
@@ -37,10 +47,9 @@ function createWindow() {
       win.webContents.send('main-process-message', (new Date()).toLocaleString());
     }
   });
-  
+
   if (VITE_DEV_SERVER_URL) {
     win.loadURL(VITE_DEV_SERVER_URL);
-    // Abrir devtools en desarrollo
     win.webContents.openDevTools();
   } else {
     win.loadFile(path.join(RENDERER_DIST, 'index.html'));
@@ -62,9 +71,5 @@ app.on('activate', () => {
 
 app.whenReady().then(createWindow);
 
-// Exportar usando module.exports
-module.exports = {
-  MAIN_DIST,
-  RENDERER_DIST,
-  VITE_DEV_SERVER_URL
-};
+// Usar module.exports para CommonJS
+export { MAIN_DIST, RENDERER_DIST };
