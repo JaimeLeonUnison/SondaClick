@@ -134,6 +134,16 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+# Build outputs and installers
+*.exe
+*.msi
+*.dll
+*.pdb
+/frontend/release/
+/frontend/*-win32-*/
+/windows_installer/
+
 *.exe 
 *.msi 
 */win-unpacked/* 
