@@ -134,7 +134,7 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
-"*.exe" 
-"*.msi" 
-"*/win-unpacked/*" 
-"*/SondaClickMX-win32-x64/*" 
+*.exe 
+*.msi 
+*/win-unpacked/* 
+*/SondaClickMX-win32-x64/*
