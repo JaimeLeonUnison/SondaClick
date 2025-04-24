@@ -138,3 +138,6 @@ dist
 "*.msi" 
 "*/win-unpacked/*" 
 "*/SondaClickMX-win32-x64/*" 
+frontend/release/
+windows_installer/*.msi
+frontend/SondaClickMX-win32-x64/
