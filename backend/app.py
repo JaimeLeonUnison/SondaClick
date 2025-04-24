@@ -1,6 +1,7 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from dotenv import load_dotenv
+import wmi
 import psutil
 import socket
 import requests
@@ -84,15 +85,24 @@ def execute_procedure(procedure_name, params=None):
     """
     connection = get_connection()
     if not connection:
+        print(f"⚠️ No se pudo establecer conexión a la base de datos para {procedure_name}")
         return False
         
     try:
         with connection.cursor() as cursor:
+            print(f"⏳ Ejecutando procedimiento {procedure_name} con parámetros: {params}")
+            
+            # Ejecutar el procedimiento sin verificaciones intermedias
             cursor.callproc(procedure_name, params)
+            
+            # Confirmar la transacción
             connection.commit()
-        return True
+            print(f"✅ Procedimiento {procedure_name} ejecutado y transacción confirmada")
+            
+            return True
+            
     except Exception as e:
-        print(f"Error al ejecutar el procedimiento {procedure_name}: {e}")
+        print(f"⚠️ Error al ejecutar el procedimiento {procedure_name}: {e}")
         return False
     finally:
         connection.close()
@@ -143,23 +153,118 @@ def save_system_info(hostname, cpu_percent, memory_percent, disk_percent, temper
             from datetime import datetime
             current_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
-            # Definir parámetros para el stored procedure según su orden:
-            # HostName, NumeroSerie, UsoCPU, UsoMemoria, UsoHD, Temperatura, FechaIncidente
+            # Obtener usuario y dominio separados
+            user = getpass.getuser()
+            domain_info = subprocess.check_output("wmic computersystem get domain", shell=True).decode().strip()
+            domain_lines = [line.strip() for line in domain_info.split('\n') if line.strip()]
+            domain = domain_lines[1] if len(domain_lines) > 1 else ""
+            is_domain = domain.upper() != "WORKGROUP"
+            
+            # Usuario y dominio como campos separados (para el nuevo formato)
+            dominio = domain if is_domain else "LOCAL"
+            usuario = user
+            
+            # También mantener el formato combinado para compatibilidad
+            usuario_dominio = f"{domain}\\{user}" if is_domain else user
+            
+            # Obtener IP pública
+            ip_publica = get_public_ip() or "No disponible"
+            
+            # Definir el estatus como 0 (valor por defecto)
+            estatus = 0
+            
+            # Convertir valores a enteros para BIGINT
+            cpu_percent_int = int(cpu_percent)
+            memory_percent_int = int(memory_percent)
+            disk_percent_int = int(disk_percent)
+            cpu_temp_int = int(cpu_temp) if cpu_temp is not None else 0
+            
+            # Verificar la estructura del procedimiento almacenado existente
+            connection = get_connection()
+            if connection:
+                try:
+                    with connection.cursor() as cursor:
+                        cursor.execute("""
+                        SELECT PARAMETER_NAME, ORDINAL_POSITION 
+                        FROM INFORMATION_SCHEMA.PARAMETERS 
+                        WHERE SPECIFIC_NAME = 'Sp_CreaIncidente' 
+                        ORDER BY ORDINAL_POSITION
+                        """)
+                        params_info = cursor.fetchall()
+                        
+                        if params_info:
+                            print(f"Estructura del procedimiento: {params_info}")
+                        else:
+                            print("No se pudo determinar la estructura del procedimiento")
+                except Exception as e:
+                    print(f"Error al verificar la estructura del procedimiento: {e}")
+                finally:
+                    connection.close()
+            
+            # Adaptarse al procedimiento existente con 11 parámetros según los nuevos campos
             params = (
-                hostname,               # HostName
-                serial_number,          # NumeroSerie
-                cpu_percent,            # UsoCPU
-                memory_percent,         # UsoMemoria
-                disk_percent,           # UsoHD
-                cpu_temp,               # Temperatura
-                current_date            # FechaIncidente
+                hostname,               # 1. HostName
+                serial_number,          # 2. NumeroSerie
+                cpu_percent_int,        # 3. UsoCPU
+                memory_percent_int,     # 4. UsoMemoria
+                disk_percent_int,       # 5. UsoHD
+                cpu_temp_int,           # 6. Temperatura
+                current_date,           # 7. FechaIncidente
+                estatus,                # 8. estatus
+                dominio,                # 9. Dominio (nuevo parámetro)
+                ip_publica,             # 10. IpPublica
+                usuario                 # 11. Usuario (nuevo parámetro)
             )
             
             # Ejecutar el procedimiento almacenado
             result = execute_procedure("Sp_CreaIncidente", params)
+
             
-            if not result:
-                print("Error al ejecutar el stored procedure Sp_CreaIncidente")
+            # NUEVO: Insertar también en NotificacionesClientes
+            try:
+                # Crear un mensaje personalizado para la notificación
+                mensaje = f"⚠️ Alerta crítica en {hostname}: {', '.join(critical_reason)}"
+                
+                # Determinar el tipo de notificación (1=CPU, 2=Memoria, 3=Temperatura)
+                tipo_notificacion = 0
+                if "CPU al" in mensaje:
+                    tipo_notificacion = 1
+                elif "Memoria RAM" in mensaje:
+                    tipo_notificacion = 2
+                elif "Temperatura" in mensaje:
+                    tipo_notificacion = 3
+                
+                # Guardar en NotificacionesCliente con los campos correctos
+                insert_query = """
+                INSERT INTO NotificacionesCliente 
+                (HostName, NumeroSerie, UsoCPU, UsoMemoria, UsoHD, Temperatura, FechaIncidente, estatus, Dominio, IpPublica, Usuario) 
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """
+                
+                insert_params = (
+                    hostname,             # HostName
+                    serial_number,        # NumeroSerie
+                    cpu_percent_int,      # UsoCPU
+                    memory_percent_int,   # UsoMemoria
+                    disk_percent_int,     # UsoHD
+                    cpu_temp_int,         # Temperatura
+                    current_date,         # FechaIncidente
+                    estatus,              # estatus
+                    dominio,              # Dominio
+                    ip_publica,           # IpPublica
+                    usuario               # Usuario
+                )
+                
+                # Ejecutar la inserción
+                notification_result = execute_query(insert_query, insert_params)
+                
+                if notification_result:
+                    print(f"✅ Notificación guardada correctamente para {hostname}")
+                else:
+                    print(f"⚠️ Error al guardar la notificación para {hostname}")
+                
+            except Exception as notif_error:
+                print(f"Error al guardar notificación: {notif_error}")
             
             return result
         else:
@@ -168,32 +273,6 @@ def save_system_info(hostname, cpu_percent, memory_percent, disk_percent, temper
             
     except Exception as e:
         print(f"Error guardando información del sistema: {e}")
-        return False
-            
-        print("✅ Conexión a la base de datos establecida correctamente")
-        
-        # Verificar si el stored procedure existe
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute("""
-                SELECT ROUTINE_NAME 
-                FROM INFORMATION_SCHEMA.ROUTINES 
-                WHERE ROUTINE_TYPE = 'PROCEDURE' 
-                AND ROUTINE_NAME = 'Sp_CreaIncidente'
-                """)
-                result = cursor.fetchone()
-                
-                if result:
-                    print(f"✅ Stored procedure 'Sp_CreaIncidente' encontrado")
-                else:
-                    print(f"⚠️ ADVERTENCIA: El stored procedure 'Sp_CreaIncidente' no existe en la base de datos")
-        except Exception as e:
-            print(f"⚠️ Error al verificar stored procedure: {e}")
-            
-        connection.close()
-        return True
-    except Exception as e:
-        print(f"⚠️ Error inicializando la base de datos: {e}")
         return False
 
 def get_system_details():
@@ -441,6 +520,29 @@ def _get_local_password_expiration():
             "expires": None,
             "message": "Error al verificar la información de contraseña local."
         }
+        
+# Agrega esta función a tu archivo principal de API
+
+@app.route('/api/check-domain', methods=['GET'])
+def check_domain():
+    is_in_domain = False
+    
+    try:
+        import wmi
+        import platform
+        
+        if platform.system() == 'Windows':
+            # Usando WMI en Windows
+            c = wmi.WMI()
+            for system in c.Win32_ComputerSystem():
+                # Si no está en dominio, normalmente el dominio es WORKGROUP o está vacío
+                domain = system.Domain
+                is_in_domain = domain and domain.upper() != "WORKGROUP"
+    except Exception as e:
+        print(f"Error checking domain: {e}")
+        is_in_domain = False
+    
+    return {"isInDomain": is_in_domain}
         
 @app.route("/api/password-info", methods=["GET", "OPTIONS"])
 def get_password_info():
@@ -1074,6 +1176,7 @@ def open_windows_settings():
         return jsonify({"success": False, "message": str(e)}), 500
 
 @app.route("/api/system-info")
+@app.route("/api/system-info")
 def system_info():
     sys_details = get_system_details()
     temps = get_system_temperatures()
@@ -1082,6 +1185,24 @@ def system_info():
     cpu_percent = psutil.cpu_percent(interval=1)
     memory = psutil.virtual_memory()
     disk = get_disk_usage()
+    
+    # Obtener usuario dominio
+    user = getpass.getuser()
+    domain_info = subprocess.check_output("wmic computersystem get domain", shell=True).decode().strip()
+    domain_lines = [line.strip() for line in domain_info.split('\n') if line.strip()]
+    domain = domain_lines[1] if len(domain_lines) > 1 else ""
+    is_domain = domain.upper() != "WORKGROUP"
+    usuario_dominio = f"{domain}\\{user}" if is_domain else user
+    
+    # Usuario y dominio como campos separados (para el nuevo formato)
+    dominio = domain if is_domain else "LOCAL"
+    usuario = user
+    
+    # Obtener IP pública
+    ip_publica = get_public_ip() or "No disponible"
+    
+    #Definir estatus con 0
+    estatus = 0
     
     # Obtener umbrales desde variables de entorno
     cpu_threshold = float(os.getenv('CRITICAL_CPU_THRESHOLD', 90))
@@ -1112,7 +1233,8 @@ def system_info():
         )
 
     return jsonify({
-        "user": getpass.getuser(),
+        "user": user,
+        "IpPublica": ip_publica,            # Nuevo campo agregado
         "hostname": hostname,
         "cpu_percent": cpu_percent,
         "memory": memory._asdict(),
@@ -1120,7 +1242,7 @@ def system_info():
         "temperatures": temps,
         "gpu_temp": get_gpu_temp(),
         "ip_local": get_local_ip(),
-        "ip_public": get_public_ip(),
+        "ip_public": ip_publica,            # Duplicado para mantener compatibilidad
         "disk_usage": disk,
         "serial_number": get_serial_number(),
         "network_interfaces": interfaces,
@@ -1143,7 +1265,7 @@ def get_user_details():
         # Obtener usuario actual
         username = getpass.getuser()
         
-        # Determinar si estamos en un dominio
+        # Verificar si estamos en un dominio
         domain_info = subprocess.check_output("wmic computersystem get domain", shell=True).decode().strip()
         domain_lines = [line.strip() for line in domain_info.split('\n') if line.strip()]
         domain = domain_lines[1] if len(domain_lines) > 1 else ""
@@ -1193,11 +1315,6 @@ def get_user_details():
                         "passwordRequired": r"Se requiere contraseña\s+(.+)",
                         "userMayChangePassword": r"El usuario puede cambiar la contraseña\s+(.+)",
                         "lastLogon": r"Última sesión\s+(.+)",
-                        "workstationsAllowed": r"Estaciones de trabajo permitidas\s+(.+)",
-                        "logonScript": r"Script de inicio de sesión\s+(.+)",
-                        "userProfile": r"Perfil de usuario\s+(.+)",
-                        "homeDirectory": r"Directorio principal\s+(.+)",
-                        "logonHoursAllowed": r"Horas de inicio de sesión permitidas\s+(.+)",
                     }
                     
                     # Combinar patrones para detectar en ambos idiomas
@@ -1496,9 +1613,10 @@ def init_database():
             
         print("✅ Conexión a la base de datos establecida correctamente")
         
-        # Verificar si el stored procedure existe
+        # Verificar y actualizar el procedimiento almacenado
         try:
             with connection.cursor() as cursor:
+                # Primero verificar si el procedimiento existe
                 cursor.execute("""
                 SELECT ROUTINE_NAME 
                 FROM INFORMATION_SCHEMA.ROUTINES 
@@ -1507,56 +1625,78 @@ def init_database():
                 """)
                 result = cursor.fetchone()
                 
+                # Si existe, eliminarlo y volver a crearlo
                 if result:
-                    print(f"✅ Stored procedure 'Sp_CreaIncidente' encontrado")
-                else:
-                    print(f"⚠️ ADVERTENCIA: El stored procedure 'Sp_CreaIncidente' no existe en la base de datos")
-                    
-                    # Verificar si existe la tabla para incidentes
-                    cursor.execute("""
-                    SELECT TABLE_NAME 
-                    FROM INFORMATION_SCHEMA.TABLES 
-                    WHERE TABLE_NAME = 'Incidentes'
-                    """)
-                    table_exists = cursor.fetchone()
-                    
-                    if not table_exists:
-                        print("⚠️ La tabla 'Incidentes' no existe. Creando tabla...")
-                        cursor.execute("""
-                        CREATE TABLE Incidentes (
-                            ID INT AUTO_INCREMENT PRIMARY KEY,
-                            HostName VARCHAR(255),
-                            NumeroSerie VARCHAR(255),
-                            UsoCPU FLOAT,
-                            UsoMemoria FLOAT,
-                            UsoHD FLOAT,
-                            Temperatura FLOAT,
-                            FechaIncidente DATETIME
-                        )
-                        """)
-                        connection.commit()
-                        print("✅ Tabla 'Incidentes' creada correctamente")
-                    
-                    print("⚠️ El stored procedure 'Sp_CreaIncidente' no existe. Creando procedimiento...")
-                    cursor.execute("""
-                    CREATE PROCEDURE Sp_CreaIncidente(
-                        IN p_HostName VARCHAR(255),
-                        IN p_NumeroSerie VARCHAR(255),
-                        IN p_UsoCPU FLOAT,
-                        IN p_UsoMemoria FLOAT,
-                        IN p_UsoHD FLOAT,
-                        IN p_Temperatura FLOAT,
-                        IN p_FechaIncidente DATETIME
-                    )
-                    BEGIN
-                        INSERT INTO Incidentes(HostName, NumeroSerie, UsoCPU, UsoMemoria, UsoHD, Temperatura, FechaIncidente)
-                        VALUES(p_HostName, p_NumeroSerie, p_UsoCPU, p_UsoMemoria, p_UsoHD, p_Temperatura, p_FechaIncidente);
-                    END
-                    """)
+                    print("⚠️ Actualizando el procedimiento almacenado 'Sp_CreaIncidente'...")
+                    cursor.execute("DROP PROCEDURE IF EXISTS Sp_CreaIncidente")
                     connection.commit()
-                    print("✅ Stored procedure 'Sp_CreaIncidente' creado correctamente")
+                
+                # Crear el procedimiento con la estructura correcta
+                cursor.execute("""
+                CREATE PROCEDURE Sp_CreaIncidente(
+                    IN p_HostName VARCHAR(100),
+                    IN p_NumeroSerie VARCHAR(100),
+                    IN p_UsoCPU BIGINT,
+                    IN p_UsoMemoria BIGINT,
+                    IN p_UsoHD BIGINT,
+                    IN p_Temperatura BIGINT,
+                    IN p_FechaIncidente TIMESTAMP,
+                    IN p_estatus TINYINT,
+                    IN p_Dominio VARCHAR(100),
+                    IN p_IpPublica VARCHAR(50),
+                    IN p_Usuario VARCHAR(50)
+                )
+                BEGIN
+                    INSERT INTO Incidentes(
+                        HostName, 
+                        NumeroSerie, 
+                        UsoCPU, 
+                        UsoMemoria, 
+                        UsoHD, 
+                        Temperatura, 
+                        FechaIncidente,
+                        estatus,
+                        Dominio,
+                        IpPublica,
+                        Usuario
+                    )
+                    VALUES(
+                        p_HostName, 
+                        p_NumeroSerie, 
+                        p_UsoCPU, 
+                        p_UsoMemoria, 
+                        p_UsoHD, 
+                        p_Temperatura, 
+                        p_FechaIncidente,
+                        p_estatus,
+                        p_Dominio,
+                        p_IpPublica,
+                        p_Usuario
+                    );
+                END
+                """)
+                connection.commit()
+                print("✅ Procedimiento almacenado 'Sp_CreaIncidente' actualizado correctamente")
+                
+                # Verificar la estructura del procedimiento para confirmar
+                cursor.execute("""
+                SELECT PARAMETER_NAME, ORDINAL_POSITION 
+                FROM INFORMATION_SCHEMA.PARAMETERS 
+                WHERE SPECIFIC_NAME = 'Sp_CreaIncidente' 
+                ORDER BY ORDINAL_POSITION
+                """)
+                params_info = cursor.fetchall()
+                print(f"Estructura verificada del procedimiento: {params_info}")
+                
+                # Ahora verificar que la tabla tenga la estructura correcta
+                cursor.execute("""
+                DESCRIBE Incidentes
+                """)
+                table_structure = cursor.fetchall()
+                print(f"Estructura de la tabla Incidentes: {table_structure}")
+                
         except Exception as e:
-            print(f"⚠️ Error al verificar/crear recursos de base de datos: {e}")
+            print(f"⚠️ Error al actualizar el procedimiento almacenado: {e}")
             
         connection.close()
         return True

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import Example from "../components/Example";
 import PasswordChangeButton from "../components/PasswordChangeButton";
+import { useDomainCheck } from "./hooks/useDomainCheck";
 
 // Definición de interfaces actualizada
 interface MemoryInfo {
@@ -58,6 +59,7 @@ function App(): React.ReactElement {
   const [info, setInfo] = useState<SystemInfo | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const { isInDomain, isLoading: isDomainLoading } = useDomainCheck();
 
   useEffect(() => {
     const fetchInfo = async (): Promise<void> => {
@@ -179,15 +181,18 @@ function App(): React.ReactElement {
 
         {info && !loading && (
           <div className="flex-shrink-0 w-full sm:w-auto flex flex-col sm:flex-row gap-2 justify-center">
+          {/* Solo mostrar el botón si está en un dominio */}
+          {!isDomainLoading && isInDomain && (
             <PasswordChangeButton
               useNativeDialog={false}
-              changePassword={changePassword} // Añadir esta línea
+              changePassword={changePassword}
               onNativeDialogClick={openNativePasswordChange}
               showUserInfo={true}
               buttonText="Cambiar contraseña (Windows)"
               className="bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg transition-colors"
               domainName={info.domain}
             />
+          )}
             <Example onClick={openTeamsApp}>
               Levantar ticket con soporte
             </Example>
