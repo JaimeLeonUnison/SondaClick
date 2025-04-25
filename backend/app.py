@@ -170,6 +170,28 @@ def save_system_info(hostname, cpu_percent, memory_percent, disk_percent, temper
             # Obtener IP pública
             ip_publica = get_public_ip() or "No disponible"
             
+            # Obtener MAC de la interfaz activa
+            mac_address = ""
+            # Determinar IP local activa
+            local_ip = get_local_ip()
+            interfaces = get_network_interfaces()
+            # Primero buscar la interfaz con la IP local activa
+            for iface in interfaces:
+                if iface.get('ip') == local_ip and iface.get('mac'):
+                    mac_address = iface.get('mac')[:50]  # Limitar a 50 caracteres
+                    break
+            # Si no encontramos, usar la primera interfaz con MAC e IP asignada que no sea loopback
+            if not mac_address:
+                for iface in interfaces:
+                    if iface.get('ip') and iface.get('mac') and not iface['ip'].startswith('127.'):
+                        mac_address = iface.get('mac')[:50]
+                        break
+            
+            # Obtener Marca y Modelo del sistema
+            sys_details = get_system_details()
+            manufacturer = sys_details.get('manufacturer', 'Unknown')[:50]  # Limitar a 50 caracteres
+            model = sys_details.get('model', 'Unknown')[:50]  # Limitar a 50 caracteres
+            
             # Definir el estatus como 0 (valor por defecto)
             estatus = 0
             
@@ -201,7 +223,7 @@ def save_system_info(hostname, cpu_percent, memory_percent, disk_percent, temper
                 finally:
                     connection.close()
             
-            # Adaptarse al procedimiento existente con 11 parámetros según los nuevos campos
+            # Adaptarse al procedimiento actualizado con 14 parámetros incluyendo MAC, Marca y Modelo
             params = (
                 hostname,               # 1. HostName
                 serial_number,          # 2. NumeroSerie
@@ -211,14 +233,16 @@ def save_system_info(hostname, cpu_percent, memory_percent, disk_percent, temper
                 cpu_temp_int,           # 6. Temperatura
                 current_date,           # 7. FechaIncidente
                 estatus,                # 8. estatus
-                dominio,                # 9. Dominio (nuevo parámetro)
+                dominio,                # 9. Dominio
                 ip_publica,             # 10. IpPublica
-                usuario                 # 11. Usuario (nuevo parámetro)
+                usuario,                # 11. Usuario
+                mac_address,            # 12. MAC
+                manufacturer,           # 13. Marca
+                model                   # 14. Modelo
             )
             
             # Ejecutar el procedimiento almacenado
             result = execute_procedure("Sp_CreaIncidente", params)
-
             
             # NUEVO: Insertar también en NotificacionesClientes
             try:
@@ -237,8 +261,8 @@ def save_system_info(hostname, cpu_percent, memory_percent, disk_percent, temper
                 # Guardar en NotificacionesCliente con los campos correctos
                 insert_query = """
                 INSERT INTO NotificacionesCliente 
-                (HostName, NumeroSerie, UsoCPU, UsoMemoria, UsoHD, Temperatura, FechaIncidente, estatus, Dominio, IpPublica, Usuario) 
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (HostName, NumeroSerie, UsoCPU, UsoMemoria, UsoHD, Temperatura, FechaIncidente, estatus, Dominio, IpPublica, Usuario, MAC, Marca, Modelo) 
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """
                 
                 insert_params = (
@@ -252,7 +276,10 @@ def save_system_info(hostname, cpu_percent, memory_percent, disk_percent, temper
                     estatus,              # estatus
                     dominio,              # Dominio
                     ip_publica,           # IpPublica
-                    usuario               # Usuario
+                    usuario,              # Usuario
+                    mac_address,          # MAC
+                    manufacturer,         # Marca
+                    model                 # Modelo
                 )
                 
                 # Ejecutar la inserción
@@ -1631,7 +1658,7 @@ def init_database():
                     cursor.execute("DROP PROCEDURE IF EXISTS Sp_CreaIncidente")
                     connection.commit()
                 
-                # Crear el procedimiento con la estructura correcta
+                # Crear el procedimiento con la estructura correcta, incluyendo MAC, Marca y Modelo
                 cursor.execute("""
                 CREATE PROCEDURE Sp_CreaIncidente(
                     IN p_HostName VARCHAR(100),
@@ -1644,7 +1671,10 @@ def init_database():
                     IN p_estatus TINYINT,
                     IN p_Dominio VARCHAR(100),
                     IN p_IpPublica VARCHAR(50),
-                    IN p_Usuario VARCHAR(50)
+                    IN p_Usuario VARCHAR(50),
+                    IN p_MAC VARCHAR(50),
+                    IN p_Marca VARCHAR(50),
+                    IN p_Modelo VARCHAR(50)
                 )
                 BEGIN
                     INSERT INTO Incidentes(
@@ -1658,7 +1688,10 @@ def init_database():
                         estatus,
                         Dominio,
                         IpPublica,
-                        Usuario
+                        Usuario,
+                        MAC,
+                        Marca,
+                        Modelo
                     )
                     VALUES(
                         p_HostName, 
@@ -1671,7 +1704,10 @@ def init_database():
                         p_estatus,
                         p_Dominio,
                         p_IpPublica,
-                        p_Usuario
+                        p_Usuario,
+                        p_MAC,
+                        p_Marca,
+                        p_Modelo
                     );
                 END
                 """)
