@@ -14,6 +14,7 @@ import ctypes
 import re
 import os
 import pymysql
+import pythoncom # <--- AÑADE ESTA LÍNEA
 
 app = Flask(__name__)
 CORS(app)  # Permite que el frontend (React) haga peticiones
@@ -555,21 +556,24 @@ def check_domain():
     is_in_domain = False
     
     try:
-        import wmi
-        import platform
+        # import wmi # Ya está importado globalmente
+        # import platform # Ya está importado globalmente
         
         if platform.system() == 'Windows':
-            # Usando WMI en Windows
-            c = wmi.WMI()
-            for system in c.Win32_ComputerSystem():
-                # Si no está en dominio, normalmente el dominio es WORKGROUP o está vacío
-                domain = system.Domain
-                is_in_domain = domain and domain.upper() != "WORKGROUP"
+            pythoncom.CoInitialize()  # <--- INICIALIZA COM AQUÍ
+            try:
+                c = wmi.WMI()
+                for system in c.Win32_ComputerSystem():
+                    # Si no está en dominio, normalmente el dominio es WORKGROUP o está vacío
+                    domain = system.Domain
+                    is_in_domain = domain and domain.upper() != "WORKGROUP"
+            finally:
+                pythoncom.CoUninitialize() # <--- DESINICIALIZA COM AQUÍ
     except Exception as e:
         print(f"Error checking domain: {e}")
-        is_in_domain = False
+        # is_in_domain permanece False si hay un error
     
-    return {"isInDomain": is_in_domain}
+    return jsonify({"isInDomain": is_in_domain})
         
 @app.route("/api/password-info", methods=["GET", "OPTIONS"])
 def get_password_info():
