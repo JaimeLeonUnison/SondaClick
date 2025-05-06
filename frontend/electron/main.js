@@ -1,5 +1,5 @@
 // Versión limpia sin problemas de módulos
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, Notification } from "electron";
 import path from "path";
 import fs from "fs";
 import process from "process";
@@ -18,6 +18,30 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
 // Variable global para la ventana
 let win = null;
 
+function mostrarNotificacionEnMain() {
+  if (Notification.isSupported()) {
+    const notification = new Notification({
+      title: "Notificación desde el proceso principal",
+      body: "Esta es una notificación de prueba.",
+    });
+    notification.show();
+
+    notification.on("click", () => {
+      console.log("Notificación clickeada");
+      if (win) {
+        win.focus(); // Mostrar la ventana al hacer clic en la notificación
+      }
+    });
+
+    notification.on('close', () => {
+      console.log('Notificación cerrada');
+    });
+
+  } else {
+    console.log('Las notificaciones no son compatibles en este sistema.');
+  }
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1200,
@@ -30,6 +54,7 @@ function createWindow() {
       contextIsolation: true,
     },
   });
+
 
   // Establecer el ícono explícitamente para Windows
   if (process.platform === "win32") {
@@ -71,7 +96,10 @@ app.on("activate", () => {
   }
 });
 
-app.whenReady().then(createWindow);
-
-// Usar module.exports para CommonJS
+app.whenReady().then (() => {
+  // Crear la ventana principal
+  createWindow();
+    // Mostrar notificación al iniciar la aplicación
+    setTimeout(mostrarNotificacionEnMain, 5000);
+});
 export { MAIN_DIST, RENDERER_DIST };

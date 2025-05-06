@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from "react";
+import { ToastContainer, toast } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';  
 import Example from "../components/Example";
 import PasswordChangeButton from "../components/PasswordChangeButton";
 import { useDomainCheck } from "./hooks/useDomainCheck";
@@ -81,6 +83,8 @@ function App(): React.ReactElement {
         setError(
           "No se pudo conectar con el servidor. Verifica que el backend esté en ejecución."
         );
+        //Notificación de error persistente
+        toast.error("Fallo al conectar con el servidor.", { autoClose: false });
       } finally {
         setLoading(false);
       }
@@ -174,6 +178,20 @@ function App(): React.ReactElement {
       className="font-sans p-4 sm:p-6 md:p-8 max-w-7xl mx-auto"
       style={{ fontFamily: "Arial" }}
     >
+      
+      <ToastContainer
+        position="top-right"
+        autoClose={5000} // Cierre automático después de 5 segundos
+        hideProgressBar={false}
+        newestOnTop={false}
+        closeOnClick
+        rtl={false}
+        pauseOnFocusLoss
+        draggable
+        pauseOnHover
+        theme="colored" // o "dark" o "colored"
+      />
+
       <div className="flex flex-col sm:flex-row justify-between items-center mb-4 sm:mb-6 gap-3">
         <h1 className="text-3xl sm:text-4xl font-semibold text-center sm:text-left w-full sm:w-auto">
           Monitoreo del Sistema
