@@ -107,7 +107,7 @@ app.whenReady().then(() => {
   }, 3000);
 
   // Listener IPC para notificaciones solicitadas por el renderer (ya lo tenías, ¡está bien!)
-  ipcMain.on('show-native-notification', (event, { title, body }) => {
+  ipcMain.on('show-native-notification', (_event, { title, body }) => {
     console.log("app.whenReady: Recibida solicitud IPC 'show-native-notification'");
     showMainProcessNotification(title, body);
   });

@@ -93,7 +93,7 @@ electron.app.whenReady().then(() => {
   setTimeout(() => {
     showMainProcessNotification("¡Bienvenido a SondaClick!", "La aplicación se ha iniciado correctamente.");
   }, 3e3);
-  electron.ipcMain.on("show-native-notification", (event, { title, body }) => {
+  electron.ipcMain.on("show-native-notification", (_event, { title, body }) => {
     console.log("app.whenReady: Recibida solicitud IPC 'show-native-notification'");
     showMainProcessNotification(title, body);
   });

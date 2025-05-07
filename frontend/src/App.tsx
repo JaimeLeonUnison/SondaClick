@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { ToastContainer, toast } from 'react-toastify';
-import 'react-toastify/dist/ReactToastify.css';  
+import { ToastContainer, toast } from "react-toastify";
+import "react-toastify/dist/ReactToastify.css";
 import Example from "../components/Example";
 import PasswordChangeButton from "../components/PasswordChangeButton";
 import { useDomainCheck } from "./hooks/useDomainCheck";
@@ -58,16 +58,18 @@ interface SystemInfo {
 }
 
 function App(): React.ReactElement {
+  const [isFirstLoad, setIsFirstLoad] = useState<boolean>(true);
   const [info, setInfo] = useState<SystemInfo | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [hasShownSuccessToast, setHasShownSuccessToast] =
+    useState<boolean>(false);
   const { isInDomain, isLoading: isDomainLoading } = useDomainCheck();
 
   useEffect(() => {
     const fetchInfo = async (): Promise<void> => {
       try {
-        // Solo mostrar carga en la primera petición, no en las actualizaciones
-        if (!info) {
+        if (isFirstLoad) {
           setLoading(true);
         }
 
@@ -78,22 +80,30 @@ function App(): React.ReactElement {
         const data: SystemInfo = await res.json();
         setInfo(data);
         setError(null);
+
+        // Mostrar la notificación de éxito solo la primera vez
+        if (!hasShownSuccessToast && !toast.isActive("success-toast")) {
+          toast.success("Datos cargados correctamente.", {
+            toastId: "success-toast",
+          });
+          setHasShownSuccessToast(true); // Marcar como mostrada
+        }
       } catch (err) {
         console.error("Error al obtener datos:", err);
         setError(
           "No se pudo conectar con el servidor. Verifica que el backend esté en ejecución."
         );
-        //Notificación de error persistente
         toast.error("Fallo al conectar con el servidor.", { autoClose: false });
       } finally {
         setLoading(false);
+        setIsFirstLoad(false); // Cambiar a false después de la primera carga
       }
     };
 
     fetchInfo();
     const interval = setInterval(fetchInfo, 5000);
     return () => clearInterval(interval);
-  }, [info]);
+  }, [hasShownSuccessToast, isFirstLoad]); // Dependencias ajustadas
 
   const getTemperatureColor = (temp: number | undefined | null): string => {
     if (temp === null || temp === undefined) return "text-gray-500";
@@ -154,7 +164,7 @@ function App(): React.ReactElement {
           },
         }
       );
-  
+
       const data = await response.json();
       if (!response.ok) {
         console.error(
@@ -165,11 +175,15 @@ function App(): React.ReactElement {
         alert(`Error: ${data.message}`);
       } else {
         // Mostrar instrucciones al usuario
-        alert(data.message || "Se ha iniciado el proceso de cambio de contraseña");
+        alert(
+          data.message || "Se ha iniciado el proceso de cambio de contraseña"
+        );
       }
     } catch (error) {
       console.error("Error al conectar con el servidor:", error);
-      alert("No se pudo conectar con el servidor. Verifica que el backend esté en ejecución.");
+      alert(
+        "No se pudo conectar con el servidor. Verifica que el backend esté en ejecución."
+      );
     }
   };
 
@@ -178,7 +192,6 @@ function App(): React.ReactElement {
       className="font-sans p-4 sm:p-6 md:p-8 max-w-7xl mx-auto"
       style={{ fontFamily: "Arial" }}
     >
-      
       <ToastContainer
         position="top-right"
         autoClose={5000} // Cierre automático después de 5 segundos
@@ -199,18 +212,18 @@ function App(): React.ReactElement {
 
         {info && !loading && (
           <div className="flex-shrink-0 w-full sm:w-auto flex flex-col sm:flex-row gap-2 justify-center">
-          {/* Solo mostrar el botón si está en un dominio */}
-          {!isDomainLoading && isInDomain && (
-            <PasswordChangeButton
-              useNativeDialog={false}
-              changePassword={changePassword}
-              onNativeDialogClick={openNativePasswordChange}
-              showUserInfo={true}
-              buttonText="Cambiar contraseña (Windows)"
-              className="bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg transition-colors"
-              domainName={info.domain}
-            />
-          )}
+            {/* Solo mostrar el botón si está en un dominio */}
+            {!isDomainLoading && isInDomain && (
+              <PasswordChangeButton
+                useNativeDialog={false}
+                changePassword={changePassword}
+                onNativeDialogClick={openNativePasswordChange}
+                showUserInfo={true}
+                buttonText="Cambiar contraseña (Windows)"
+                className="bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg transition-colors"
+                domainName={info.domain}
+              />
+            )}
             <Example onClick={openTeamsApp}>
               Levantar ticket con soporte
             </Example>
