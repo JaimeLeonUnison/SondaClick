@@ -1,6 +1,6 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-from dotenv import load_dotenv
+#from dotenv import load_dotenv
 import wmi
 import psutil
 import socket
@@ -20,7 +20,7 @@ app = Flask(__name__)
 CORS(app)  # Permite que el frontend (React) haga peticiones
 
 #Cargar variables de entorno desde el archivo .env
-load_dotenv()
+#load_dotenv()
 
 def get_connection():
     """

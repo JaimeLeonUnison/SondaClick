@@ -7,11 +7,15 @@
   "type": "commonjs",
   "scripts": {
     "dev": "vite",
-    "build": "vite build && electron-builder",
+    "build": "tsc && vite build",
     "preview": "vite preview",
+    "prepackage": "node ../scripts/prepare-package-files.js",
+    "package": "electron-packager . SondaClickMX --platform=win32 --arch=x64 --icon=public/icon.ico --overwrite", 
+    "build-msi": "node ../build_installer.js",
     "electron": "electron ."
   },
   "dependencies": {
+    "dotenv": "^16.5.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-toastify": "^11.0.5"
