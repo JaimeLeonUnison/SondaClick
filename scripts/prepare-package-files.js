@@ -5,7 +5,7 @@ const path = require('path');
 const projectRoot = path.resolve(__dirname, '..');
 const frontendDir = path.join(projectRoot, 'frontend');
 
-const backendExeSrc = path.join(projectRoot, 'backend', 'dist', 'SondaClickBackend', 'SondaClickBackend.exe');
+const backendExeSrc = path.join(projectRoot, 'backend', 'dist', 'SondaClickBackend.exe');
 const envSrc = path.join(projectRoot, '.env');
 
 const backendDestDir = path.join(frontendDir, 'packaged-backend');

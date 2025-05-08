@@ -1,0 +1,1683 @@
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi" 
+     xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
+  <!-- http://wixtoolset.org/documentation/manual/v3/xsd/wix/product.html -->
+  <Product Id="DEBE5A69-322F-41EB-9631-8FFFC85A0D45" 
+           UpgradeCode="F18A0E1A-3CCD-4B91-8AA5-A2C516CC1D75"
+           Name = "SondaClickMX (Machine - MSI)"
+           Version="1.0.0.0"
+           Manufacturer="SONDA"
+           Language="1033">
+    <!-- Only run this installer on Windows 7 or up (or if it"s already installed, I guess) -->
+    <!-- <Condition Message="This application is only supported on Windows 7 or higher.">
+      <![CDATA[Installed OR (VersionNT >= 601)]]>
+    </Condition> -->
+    <!-- http://wixtoolset.org/documentation/manual/v3/xsd/wix/package.html -->
+    <Package InstallerVersion="405"
+             Compressed="yes"
+             Comments="Windows Installer Package"
+             Platform="x86"
+             InstallScope="perMachine"/>
+    <!-- Don't allow downgrades -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A later version of this product is already installed. Setup will now exit."/>
+    <!-- This will hide our Uninstall entry in Apps & Features. We doing this so
+    we can write our own which we can better control. -->
+    <Property Id="ARPSYSTEMCOMPONENT" Value="1" />
+    <!-- While the MSI package is hidden in Apps & Features, it can still be queried
+    via PowerShell and other means. To differentiate we give the public entry a slightly
+    different name to make admins life easier.  -->
+    <Property Id="VisibleProductName" Value="SondaClickMX (Machine)" />
+    <!-- Tells the package to install perUser or perMachine. In case of perUser, all
+    files will be redirected to the user profile and all registry entries to HKCU. -->
+    <Property Id="MSIINSTALLPERUSER" Secure="yes" Value="0" />
+    <!-- Overides the default install mode. It solves a problem where
+    individual packaged files that have the same version as in previous
+    installed App version will be deleted if the files are in use during
+    this upgrade. Unfortunately this causes an ICE 40 warning during linking. -->
+    <Property Id="REINSTALLMODE" Value="emus" />
+    <!-- Overrides the default reboot behavior if files are in use during the upgrade.
+    By default, this will be set to "ReallySuppress" to make sure no unexpected reboot will happpen.-->
+    <Property Id="REBOOT" Value="ReallySuppress" />
+    <!-- Installlation level to use that determines which features are installed.
+    see guides/enduser.md to check which Install Level maps to which feature that will
+    correspondingly get installed.
+    If not set, this will default to "2" (Main Feature, Launch On Login) -->
+    <Property Id="INSTALLLEVEL" Value="2" />
+    <!-- Allows to customize the Windows user group that gets access rights on
+    the install folder in cas the auto-updater is installed. User that run the App
+    must be part of that user group to be able to auto-update. -->
+    <Property Id="UPDATERUSERGROUP" Value="Users" />
+    <!-- A property to define whether the auto-updater is enabled when the
+    feature gets installed. This way the update can be installed but also be disabled
+    by overwriting the default value.  -->
+    <Property Id="AUTOUPDATEENABLED" Value="1" />
+    <!-- Necessary registry search to find the install path which is used by the
+    PurgeOnUninstall action. Since this package can be installed perUser or perMachine,
+    we have to look in both places. First successful search wins. -->
+    <Property Id="INSTALLPATH">
+      <RegistrySearch Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{DEBE5A69-322F-41EB-9631-8FFFC85A0D45}.msq"
+                      Root="HKCU" 
+                      Type="raw"
+                      Id="INSTALLPATH_REGSEARCH_HKCU"
+                      Name="InstallPath"
+                      Win64="no"/>
+      <RegistrySearch Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{DEBE5A69-322F-41EB-9631-8FFFC85A0D45}.msq"
+                      Root="HKLM" 
+                      Type="raw"
+                      Id="INSTALLPATH_REGSEARCH_HKLM"
+                      Name="InstallPath"
+                      Win64="no"/>
+    </Property>
+    <!-- Lets change the product name depending on the perUser installMode. 
+    This way the user and admins can see in which scope the MSI was installed. -->
+    <SetProperty Action="SetVisibleProductName" Id="VisibleProductName" Sequence="both" Before="AppSearch"  Value="SondaClickMX (User)">
+      <![CDATA[MSIINSTALLPERUSER = "1"]]>
+    </SetProperty>
+    <!-- Again we give thee MSI generaten entry a slightly different name to help 
+    differentiate between the public one and the invisible one. -->
+    <SetProperty Action="SetProductName" Id="ProductName" Sequence="both" Before="AppSearch"  Value="SondaClickMX (User - MSI)">
+      <![CDATA[MSIINSTALLPERUSER = "1"]]>
+    </SetProperty>
+
+    <Media Id="1" Cabinet="product.cab" EmbedCab="yes"/>
+
+    <UI Id="UserInterface">
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Tahoma" Size="12" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Tahoma" Size="9" Bold="yes" />
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+      <Property Id="WixUI_Mode" Value="FeatureTree" />
+      <DialogRef Id="ErrorDlg" />
+      <DialogRef Id="FatalError" />
+      <DialogRef Id="FilesInUse" />
+      <DialogRef Id="MsiRMFilesInUse" />
+      <DialogRef Id="PrepareDlg" />
+      <DialogRef Id="ProgressDlg" />
+      <DialogRef Id="ResumeDlg" />
+      <DialogRef Id="UserExit" />
+      <Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999">1</Publish>
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="CustomizeDlg">NOT Installed</Publish>
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg">Installed AND PATCH</Publish>
+      <Publish Dialog="CustomizeDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="1">Installed</Publish>
+      <Publish Dialog="CustomizeDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2">NOT Installed</Publish>
+      <Publish Dialog="CustomizeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="CustomizeDlg" Order="1">NOT Installed OR WixUI_InstallMode = "Change"</Publish>
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" Order="2">Installed AND NOT PATCH</Publish>
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="3">Installed AND PATCH</Publish>
+      <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg">1</Publish>
+      <Publish Dialog="MaintenanceTypeDlg" Control="ChangeButton" Event="NewDialog" Value="CustomizeDlg">1</Publish>
+      <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
+      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
+      <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg">1</Publish>
+    </UI>
+    <UIRef Id="WixUI_Common" />
+
+
+    <!-- Step 2: Add files and directories -->
+    <Directory Id="TARGETDIR" Name="SourceDir">
+       <!-- Installation files to %PROGRAMFILES% -->
+      <Directory Id="ProgramFilesFolder">
+        <Directory Id="APPLICATIONROOTDIRECTORY" Name="SondaClickMX">
+          <Directory Id="__741183f6_f9e9_4fe9_a88e_52a83c7c324d" Name="app-1.0.0">
+            <Directory Id="_locales_065f7895_7f71_4d17_86c5_9fff0efc174a" Name="locales">
+              <Component Id="_locales_af.pak_8f55e309_9919_4bdb_9f2d_44887f3c97cf" Guid="01f71a33-7c76-4687-be77-05134c0601e2" Win64="no">
+                <File Name="af.pak" Id="_locales_af.pak_8f55e309_9919_4bdb_9f2d_44887f3c97cf" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\af.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_am.pak_60506b9b_bd0e_4bd3_9a95_d6353ce80dfe" Guid="1f7ef231-c626-41fe-b644-cc9cd084e2db" Win64="no">
+                <File Name="am.pak" Id="_locales_am.pak_60506b9b_bd0e_4bd3_9a95_d6353ce80dfe" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\am.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_ar.pak_8fc9a445_f84e_4504_853b_da6bf2e58c86" Guid="d5b9908c-52e3-478a-a111-e2966a30f4ff" Win64="no">
+                <File Name="ar.pak" Id="_locales_ar.pak_8fc9a445_f84e_4504_853b_da6bf2e58c86" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\ar.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_bg.pak_71941cbc_a548_4318_9d59_8f467233f3d0" Guid="b4ba0200-f20c-4128-b1c0-436147408141" Win64="no">
+                <File Name="bg.pak" Id="_locales_bg.pak_71941cbc_a548_4318_9d59_8f467233f3d0" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\bg.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_bn.pak_f51703ba_6dfc_4701_ab04_36f4e42ead9b" Guid="94f05fd7-79d0-441f-9ed1-8dbc50825501" Win64="no">
+                <File Name="bn.pak" Id="_locales_bn.pak_f51703ba_6dfc_4701_ab04_36f4e42ead9b" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\bn.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_ca.pak_ba703e4f_eeb1_4141_9566_7b0525307fc2" Guid="84eecd46-cbf6-4d53-913e-a13831693fc5" Win64="no">
+                <File Name="ca.pak" Id="_locales_ca.pak_ba703e4f_eeb1_4141_9566_7b0525307fc2" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\ca.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_cs.pak_81e8afd8_85c5_4dfd_a891_00d3de3ed601" Guid="0ac1c9f9-88c1-4687-9d75-7a63c469944a" Win64="no">
+                <File Name="cs.pak" Id="_locales_cs.pak_81e8afd8_85c5_4dfd_a891_00d3de3ed601" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\cs.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_da.pak_33e4e802_a42f_425f_8dde_0fbe6be81d16" Guid="d70e3f99-e69f-474f-94d3-8ac06eee70ef" Win64="no">
+                <File Name="da.pak" Id="_locales_da.pak_33e4e802_a42f_425f_8dde_0fbe6be81d16" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\da.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_de.pak_bbbc049f_7e93_44fc_aa86_a0dafb9115ad" Guid="b5055b09-c69a-4712-b3f1-7e05ad8b7dca" Win64="no">
+                <File Name="de.pak" Id="_locales_de.pak_bbbc049f_7e93_44fc_aa86_a0dafb9115ad" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\de.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_el.pak_daa4f8b1_5104_4278_86d0_b93cec39683e" Guid="77e6f342-8e1c-42aa-bd7d-4296a168febe" Win64="no">
+                <File Name="el.pak" Id="_locales_el.pak_daa4f8b1_5104_4278_86d0_b93cec39683e" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\el.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_en_GB.pak_de6f9624_c634_4f40_a2c9_b8c69a6eb0c4" Guid="066cd23f-cac8-40a6-99e2-e5ae01fa20a3" Win64="no">
+                <File Name="en-GB.pak" Id="_locales_en_GB.pak_de6f9624_c634_4f40_a2c9_b8c69a6eb0c4" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\en-GB.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_en_US.pak_06b336ff_1ca7_4839_b2b2_6d26c91594a8" Guid="5fcc5837-c775-4713-bdf3-e239bd246676" Win64="no">
+                <File Name="en-US.pak" Id="_locales_en_US.pak_06b336ff_1ca7_4839_b2b2_6d26c91594a8" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\en-US.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_es_419.pak_2e557a7a_2877_44c8_b53d_e8561bfa85b9" Guid="abe4a097-f037-4381-974d-28325a532ac8" Win64="no">
+                <File Name="es-419.pak" Id="_locales_es_419.pak_2e557a7a_2877_44c8_b53d_e8561bfa85b9" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\es-419.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_es.pak_08d71186_415e_40f1_8040_9d3d0dc3ff96" Guid="85bdc37b-ef87-4543-a3d4-189648aa1b4e" Win64="no">
+                <File Name="es.pak" Id="_locales_es.pak_08d71186_415e_40f1_8040_9d3d0dc3ff96" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\es.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_et.pak_a4bd0107_7da4_4fc8_a01a_62448e6e44ab" Guid="e30bf997-528c-43b8-9d6a-09d24d44a61d" Win64="no">
+                <File Name="et.pak" Id="_locales_et.pak_a4bd0107_7da4_4fc8_a01a_62448e6e44ab" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\et.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_fa.pak_0faa9c41_9c35_460c_b1eb_e87ecff9bb4e" Guid="f68f5ca2-7ff8-45ca-a968-bfe9c81a29ed" Win64="no">
+                <File Name="fa.pak" Id="_locales_fa.pak_0faa9c41_9c35_460c_b1eb_e87ecff9bb4e" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\fa.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_fi.pak_2e726ca7_89d5_4793_96ed_ee2e911103a0" Guid="c37ce55f-89e3-42a5-a0ee-3fe4820a2279" Win64="no">
+                <File Name="fi.pak" Id="_locales_fi.pak_2e726ca7_89d5_4793_96ed_ee2e911103a0" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\fi.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_fil.pak_9879815c_14d6_4291_8dd3_32d19be5b4fe" Guid="fb0b462b-11f4-4c48-8b7b-eaa72b777b97" Win64="no">
+                <File Name="fil.pak" Id="_locales_fil.pak_9879815c_14d6_4291_8dd3_32d19be5b4fe" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\fil.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_fr.pak_a6c46923_5027_4c4c_aaef_8a730e8d9487" Guid="e3a06d16-11be-45d5-aa87-87dbf3e27956" Win64="no">
+                <File Name="fr.pak" Id="_locales_fr.pak_a6c46923_5027_4c4c_aaef_8a730e8d9487" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\fr.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_gu.pak_1cd01d09_fd76_4d8d_91a7_4159aa80d1d1" Guid="2f36f992-440f-480e-bfcf-0028e5498047" Win64="no">
+                <File Name="gu.pak" Id="_locales_gu.pak_1cd01d09_fd76_4d8d_91a7_4159aa80d1d1" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\gu.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_he.pak_e97e6d2f_0faf_42b9_8908_a070e866c64a" Guid="6b8608e8-fb05-4e40-b958-b97784179735" Win64="no">
+                <File Name="he.pak" Id="_locales_he.pak_e97e6d2f_0faf_42b9_8908_a070e866c64a" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\he.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_hi.pak_c35f622d_181c_4127_959d_789ff06e1150" Guid="8f4af051-f727-4564-b809-e5f954bc19ca" Win64="no">
+                <File Name="hi.pak" Id="_locales_hi.pak_c35f622d_181c_4127_959d_789ff06e1150" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\hi.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_hr.pak_7d5c5d6b_8e20_4a55_b203_ac661499c872" Guid="fa4e0d71-2cfe-45fc-9295-9f10be8a8110" Win64="no">
+                <File Name="hr.pak" Id="_locales_hr.pak_7d5c5d6b_8e20_4a55_b203_ac661499c872" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\hr.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_hu.pak_a4bde0bb_363e_4aae_b97b_992081650e28" Guid="6d204e47-a56e-4795-9de0-8a1da702562a" Win64="no">
+                <File Name="hu.pak" Id="_locales_hu.pak_a4bde0bb_363e_4aae_b97b_992081650e28" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\hu.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_id.pak_72cdb90e_3c3c_48cf_862e_f3f2e0243a95" Guid="996820d6-8ada-4ea1-9feb-f42de8e9732d" Win64="no">
+                <File Name="id.pak" Id="_locales_id.pak_72cdb90e_3c3c_48cf_862e_f3f2e0243a95" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\id.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_it.pak_4e086bb6_d45e_4340_98b1_8824ef6baeae" Guid="3c1cf9b0-f563-48fe-8ff2-4e9ca8a66794" Win64="no">
+                <File Name="it.pak" Id="_locales_it.pak_4e086bb6_d45e_4340_98b1_8824ef6baeae" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\it.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_ja.pak_7893dbca_ddbc_45ad_9221_d423ed1f7d33" Guid="2f22077e-0a06-4124-8916-ce662ce27bdf" Win64="no">
+                <File Name="ja.pak" Id="_locales_ja.pak_7893dbca_ddbc_45ad_9221_d423ed1f7d33" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\ja.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_kn.pak_6d7c8796_9ea9_42a5_b448_bb0b9ee985bd" Guid="8f3520e2-328c-4b98-a9e8-c5c12355bf6a" Win64="no">
+                <File Name="kn.pak" Id="_locales_kn.pak_6d7c8796_9ea9_42a5_b448_bb0b9ee985bd" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\kn.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_ko.pak_580b8724_70ca_4769_89a5_dc753d25c25c" Guid="84e21567-394d-43e8-947a-69399561193e" Win64="no">
+                <File Name="ko.pak" Id="_locales_ko.pak_580b8724_70ca_4769_89a5_dc753d25c25c" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\ko.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_lt.pak_ec852121_02b0_4e8d_a021_6a3562bdca8b" Guid="dcc79df8-8507-4bf5-8190-6ab9655df52b" Win64="no">
+                <File Name="lt.pak" Id="_locales_lt.pak_ec852121_02b0_4e8d_a021_6a3562bdca8b" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\lt.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_lv.pak_f3521110_821b_4dd7_8513_c756a9d20056" Guid="7743a950-3d33-4bb8-82a3-2fcd18960884" Win64="no">
+                <File Name="lv.pak" Id="_locales_lv.pak_f3521110_821b_4dd7_8513_c756a9d20056" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\lv.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_ml.pak_2972cab4_4e1b_4a0d_b77b_6636035c54e2" Guid="ad22feee-d1b8-4b69-a13a-c1a1b7cdd255" Win64="no">
+                <File Name="ml.pak" Id="_locales_ml.pak_2972cab4_4e1b_4a0d_b77b_6636035c54e2" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\ml.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_mr.pak_8b277826_9f0c_49ff_98c1_dd652326a36d" Guid="0ea143c4-ad8c-442c-a6e3-6f91a472ea23" Win64="no">
+                <File Name="mr.pak" Id="_locales_mr.pak_8b277826_9f0c_49ff_98c1_dd652326a36d" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\mr.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_ms.pak_8c66a39b_05a8_4dd6_960f_cb8974ccf342" Guid="026999b5-ac42-48d6-9945-f04f81ad511e" Win64="no">
+                <File Name="ms.pak" Id="_locales_ms.pak_8c66a39b_05a8_4dd6_960f_cb8974ccf342" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\ms.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_nb.pak_602ed5f7_9ab2_4938_87be_8e0b87acf122" Guid="9b5031f2-1f52-4bed-a894-c53c0aa50bff" Win64="no">
+                <File Name="nb.pak" Id="_locales_nb.pak_602ed5f7_9ab2_4938_87be_8e0b87acf122" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\nb.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_nl.pak_c5c39dd6_aeb6_480a_9087_1b6d6ffa2c87" Guid="afe6ee9c-2d4d-4a21-ad13-c8de7c2042c6" Win64="no">
+                <File Name="nl.pak" Id="_locales_nl.pak_c5c39dd6_aeb6_480a_9087_1b6d6ffa2c87" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\nl.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_pl.pak_7000c2f6_95db_4bc4_bc13_0c3ae8700454" Guid="5a4db487-336b-43db-9824-019d62a9ebe7" Win64="no">
+                <File Name="pl.pak" Id="_locales_pl.pak_7000c2f6_95db_4bc4_bc13_0c3ae8700454" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\pl.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_pt_BR.pak_2becdb25_6972_4ee1_a07c_2e438633671c" Guid="f9fbf521-94bf-4022-81d1-a474be32cdf2" Win64="no">
+                <File Name="pt-BR.pak" Id="_locales_pt_BR.pak_2becdb25_6972_4ee1_a07c_2e438633671c" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\pt-BR.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_pt_PT.pak_500ba1c1_22e4_4273_a964_6761d412112f" Guid="0ae451a5-40da-4c0a-87a4-f616ecdc1eef" Win64="no">
+                <File Name="pt-PT.pak" Id="_locales_pt_PT.pak_500ba1c1_22e4_4273_a964_6761d412112f" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\pt-PT.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_ro.pak_920afaf7_20bb_43f2_a21b_d16e18d8a4a7" Guid="f52dc05f-857c-4e35-ac37-f565a355d661" Win64="no">
+                <File Name="ro.pak" Id="_locales_ro.pak_920afaf7_20bb_43f2_a21b_d16e18d8a4a7" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\ro.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_ru.pak_2f8545b7_3480_440f_b7b4_5a34a015dd77" Guid="8483c716-b43e-4ad4-9830-eb0b2bb82d8d" Win64="no">
+                <File Name="ru.pak" Id="_locales_ru.pak_2f8545b7_3480_440f_b7b4_5a34a015dd77" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\ru.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_sk.pak_1f20d231_54a3_4c26_b3ec_1cf102eee230" Guid="71f84568-6664-4260-b7bf-12bb97102aa2" Win64="no">
+                <File Name="sk.pak" Id="_locales_sk.pak_1f20d231_54a3_4c26_b3ec_1cf102eee230" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\sk.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_sl.pak_d519e099_dc32_4790_a426_0d013306e186" Guid="71ce3b64-430b-4bd1-8512-4882948fbce0" Win64="no">
+                <File Name="sl.pak" Id="_locales_sl.pak_d519e099_dc32_4790_a426_0d013306e186" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\sl.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_sr.pak_a7614360_a947_4845_b7ed_a83e3f488ce2" Guid="42e7286c-3d8e-442d-84fc-9d923d5a538e" Win64="no">
+                <File Name="sr.pak" Id="_locales_sr.pak_a7614360_a947_4845_b7ed_a83e3f488ce2" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\sr.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_sv.pak_d6a388cf_6cb4_4573_b55d_a97ddb15ac81" Guid="36dae6d0-de8e-44f2-94cf-d881d3c115fc" Win64="no">
+                <File Name="sv.pak" Id="_locales_sv.pak_d6a388cf_6cb4_4573_b55d_a97ddb15ac81" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\sv.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_sw.pak_4da0cc7d_36c3_4b6a_819a_fccacadf0818" Guid="4c14ee33-7df0-4e40-9ca1-f34a730714b0" Win64="no">
+                <File Name="sw.pak" Id="_locales_sw.pak_4da0cc7d_36c3_4b6a_819a_fccacadf0818" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\sw.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_ta.pak_2aef8984_a3c0_477b_83b0_d0f76ebd9220" Guid="54b34fb5-f8f2-429f-9eab-d5382c818b5e" Win64="no">
+                <File Name="ta.pak" Id="_locales_ta.pak_2aef8984_a3c0_477b_83b0_d0f76ebd9220" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\ta.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_te.pak_a0134e28_8fbb_4768_9366_5c17fb1e1d51" Guid="b6e3490e-3adc-4bcc-bb4e-6e6391c9f236" Win64="no">
+                <File Name="te.pak" Id="_locales_te.pak_a0134e28_8fbb_4768_9366_5c17fb1e1d51" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\te.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_th.pak_0c996870_81b4_4a9b_b591_6fd88cf071ee" Guid="9e3ac8d5-9813-4eb6-9d4a-d5383444851b" Win64="no">
+                <File Name="th.pak" Id="_locales_th.pak_0c996870_81b4_4a9b_b591_6fd88cf071ee" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\th.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_tr.pak_ab0a421c_2227_4c69_9995_143c680fb7d5" Guid="ef414bfe-6801-461e-a1ce-3afd01e26431" Win64="no">
+                <File Name="tr.pak" Id="_locales_tr.pak_ab0a421c_2227_4c69_9995_143c680fb7d5" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\tr.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_uk.pak_61965c0f_acd5_403e_87cd_67a15184ed40" Guid="2ca978e1-a47c-4658-bfd3-416901631afd" Win64="no">
+                <File Name="uk.pak" Id="_locales_uk.pak_61965c0f_acd5_403e_87cd_67a15184ed40" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\uk.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_ur.pak_ff7936ea_5f68_40bc_9b79_1b5d5bb90aff" Guid="49c7964a-a3fe-4e73-a9a0-06a2934a0277" Win64="no">
+                <File Name="ur.pak" Id="_locales_ur.pak_ff7936ea_5f68_40bc_9b79_1b5d5bb90aff" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\ur.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_vi.pak_34f9c450_aed3_4a53_9f0d_de9bcc5c3b4d" Guid="7f427cd4-f721-4cfa-8a07-6f02a421ed43" Win64="no">
+                <File Name="vi.pak" Id="_locales_vi.pak_34f9c450_aed3_4a53_9f0d_de9bcc5c3b4d" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\vi.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_zh_CN.pak_f50134c6_88bb_44bc_8a09_f73e908a7c29" Guid="3660b527-7653-4f78-8a4d-9771c5ebd4e3" Win64="no">
+                <File Name="zh-CN.pak" Id="_locales_zh_CN.pak_f50134c6_88bb_44bc_8a09_f73e908a7c29" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\zh-CN.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+              <Component Id="_locales_zh_TW.pak_22854da1_1dbd_48c5_b8f0_69bbfb74251f" Guid="426f01d1-70b3-4543-8bf4-fc2cff16ec76" Win64="no">
+                <File Name="zh-TW.pak" Id="_locales_zh_TW.pak_22854da1_1dbd_48c5_b8f0_69bbfb74251f" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\locales\zh-TW.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+              </Component>
+            </Directory>
+            <Directory Id="_resources_c20d30ed_9f39_433a_adaf_6048e0306b9b" Name="resources">
+              <Directory Id="_resources_app_d39e0332_5908_4d99_b9cd_5084bda0adae" Name="app">
+                <Directory Id="_resources_app_components_e596fda0_a4dc_4095_b35b_881b28f55f65" Name="components">
+                  <Component Id="_Example.tsx_63c17087_69a8_40e4_a08b_15bfc78cd723" Guid="1617cdf6-3fa5-4a98-8f6f-e62948522844" Win64="no">
+                    <File Name="Example.tsx" Id="_Example.tsx_63c17087_69a8_40e4_a08b_15bfc78cd723" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\components\Example.tsx" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                  </Component>
+                  <Component Id="_PasswordChangeButton.tsx_e9dbc670_6940_4434_bb04_a281e5a57f4c" Guid="677c1f97-2dc3-4397-bdeb-666b229348fe" Win64="no">
+                    <File Name="PasswordChangeButton.tsx" Id="_PasswordChangeButton.tsx_e9dbc670_6940_4434_bb04_a281e5a57f4c" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\components\PasswordChangeButton.tsx" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                  </Component>
+                  <Component Id="_PasswordChangeModal.tsx_6fa4dd49_9a8e_49f5_a89b_c801ddada331" Guid="1604f3f4-80f8-4e6f-b0b3-681b4e8b3085" Win64="no">
+                    <File Name="PasswordChangeModal.tsx" Id="_PasswordChangeModal.tsx_6fa4dd49_9a8e_49f5_a89b_c801ddada331" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\components\PasswordChangeModal.tsx" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                  </Component>
+                  <Component Id="_UsersDetails.tsx_a8edef5c_1707_4d85_8e07_579b1103ea36" Guid="2a9887c8-2b9d-428d-a788-3472584c9030" Win64="no">
+                    <File Name="UsersDetails.tsx" Id="_UsersDetails.tsx_a8edef5c_1707_4d85_8e07_579b1103ea36" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\components\UsersDetails.tsx" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                  </Component>
+                </Directory>
+                <Directory Id="_resources_app_dist_7b4c840a_7970_472f_8bd2_2ddb26d41a79" Name="dist">
+                  <Directory Id="_resources_app_dist_assets_461eda12_c6f9_4858_8ad0_f7bdf906ebf6" Name="assets">
+                    <Component Id="_index_CwE5NK02.css_47eee113_ccce_450c_8e47_ce5c495f9124" Guid="02520f06-e4bf-4fba-bd54-f34a84b0387f" Win64="no">
+                      <File Name="index-CwE5NK02.css" Id="_index_CwE5NK02.css_47eee113_ccce_450c_8e47_ce5c495f9124" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\dist\assets\index-CwE5NK02.css" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_index_D3q1pPJe.js_a44364d1_12f5_4a89_88db_3c5f80053b38" Guid="14d545c0-24c3-4652-8d76-355d4cb65fcb" Win64="no">
+                      <File Name="index-D3q1pPJe.js" Id="_index_D3q1pPJe.js_a44364d1_12f5_4a89_88db_3c5f80053b38" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\dist\assets\index-D3q1pPJe.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                  </Directory>                  <Component Id="_electron_vite.animate.svg_1d74b66d_1723_4c16_a5a9_5a4226e2eeb5" Guid="13fb04cc-74dc-453f-b061-180388f93230" Win64="no">
+                    <File Name="electron-vite.animate.svg" Id="_electron_vite.animate.svg_1d74b66d_1723_4c16_a5a9_5a4226e2eeb5" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\dist\electron-vite.animate.svg" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                  </Component>
+                  <Component Id="_electron_vite.svg_25f40731_b87a_481d_95c6_b79f2d0fadaa" Guid="7f14b775-fd52-44d1-9316-6051c499ed1a" Win64="no">
+                    <File Name="electron-vite.svg" Id="_electron_vite.svg_25f40731_b87a_481d_95c6_b79f2d0fadaa" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\dist\electron-vite.svg" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                  </Component>
+                  <Component Id="_resources_app_dist_icon.ico_e8ea7c4e_1d8b_4d31_926e_69c9c997c465" Guid="642dc3e1-03af-4c0e-9b27-f8fb96feede7" Win64="no">
+                    <File Name="icon.ico" Id="_resources_app_dist_icon.ico_e8ea7c4e_1d8b_4d31_926e_69c9c997c465" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\dist\icon.ico" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                  </Component>
+                  <Component Id="_resources_app_dist_index.html_fa6c4985_30ed_44cd_805c_8ac09e11da39" Guid="8af0c773-1dae-432a-9ca2-4708ebab425f" Win64="no">
+                    <File Name="index.html" Id="_resources_app_dist_index.html_fa6c4985_30ed_44cd_805c_8ac09e11da39" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\dist\index.html" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                  </Component>
+                  <Component Id="_resources_app_dist_vite.svg_c04ecb26_d8cd_4c41_9beb_d304731c8020" Guid="200c43a3-4727-488b-99d0-90e770489157" Win64="no">
+                    <File Name="vite.svg" Id="_resources_app_dist_vite.svg_c04ecb26_d8cd_4c41_9beb_d304731c8020" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\dist\vite.svg" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                  </Component>
+                </Directory>
+
+                <Directory Id="_resources_app_dist_electron_54c8e6a7_db8e_4741_8129_85fc537aa177" Name="dist-electron">
+                  <Component Id="_main.js_f82e89d3_f8fe_4962_80bd_0bb949863b5b" Guid="8be86d09-c426-4fe5-95df-29876a906a06" Win64="no">
+                    <File Name="main.js" Id="_main.js_f82e89d3_f8fe_4962_80bd_0bb949863b5b" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\dist-electron\main.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                  </Component>
+                  <Component Id="_preload.js_9694a4e3_67b5_407a_a421_d9cb565a6d86" Guid="17a963b3-8a5f-46b7-97cb-951610464290" Win64="no">
+                    <File Name="preload.js" Id="_preload.js_9694a4e3_67b5_407a_a421_d9cb565a6d86" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\dist-electron\preload.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                  </Component>
+                  <Component Id="_preload.mjs_2bcb6739_5a0c_464b_b44a_0952518a9ce6" Guid="65d2a33b-2c4c-46bb-96af-0e8d42bac797" Win64="no">
+                    <File Name="preload.mjs" Id="_preload.mjs_2bcb6739_5a0c_464b_b44a_0952518a9ce6" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\dist-electron\preload.mjs" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                  </Component>
+                </Directory>
+                <Directory Id="_resources_app_electron_211a0207_0eb2_49fd_9d88_bcec5fa0218b" Name="electron">
+                  <Component Id="_electron_env.d.ts_20f71ff1_56b4_407d_9d6c_dc561bef288e" Guid="dd54ebbc-ae3f-4f23-9891-61bc33797386" Win64="no">
+                    <File Name="electron-env.d.ts" Id="_electron_env.d.ts_20f71ff1_56b4_407d_9d6c_dc561bef288e" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\electron\electron-env.d.ts" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                  </Component>
+                  <Component Id="_resources_app_electron_main.js_cc43e877_999c_44a9_83e7_4062c1c0d9ba" Guid="522a4445-f5d9-43e2-8de1-1db652cb7c0b" Win64="no">
+                    <File Name="main.js" Id="_resources_app_electron_main.js_cc43e877_999c_44a9_83e7_4062c1c0d9ba" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\electron\main.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                  </Component>
+                  <Component Id="_resources_app_electron_main.ts_089f130e_e4da_49f1_bff8_6f0da6a264e5" Guid="f73d8119-e78d-43ed-9f48-b2f194d824cc" Win64="no">
+                    <File Name="main.ts" Id="_resources_app_electron_main.ts_089f130e_e4da_49f1_bff8_6f0da6a264e5" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\electron\main.ts" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                  </Component>
+                  <Component Id="_resources_app_electron_preload.ts_12a34591_a524_4ddd_887f_ef7cadbe5a1b" Guid="9384b655-57db-492b-916b-e8d0d8a617bd" Win64="no">
+                    <File Name="preload.ts" Id="_resources_app_electron_preload.ts_12a34591_a524_4ddd_887f_ef7cadbe5a1b" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\electron\preload.ts" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                  </Component>
+                </Directory>
+                <Directory Id="_resources_app_node_modules_a38e0047_35f1_4464_a43d_8817ea91e303" Name="node_modules">
+                  <Directory Id="_resources_app_node_modules_.vite_32dfafb6_2ee9_4b65_a877_23cbedbb0fd9" Name=".vite">
+                    <Directory Id="_deps_9de54241_3aea_4b2c_861a_30db2905c46f" Name="deps">
+                      <Component Id="__metadata.json_4bef1c1d_066f_48cb_aa0a_fcead806b085" Guid="d4f976af-bf6a-470b-b35b-d7adf8509fdd" Win64="no">
+                        <File Name="_metadata.json" Id="__metadata.json_4bef1c1d_066f_48cb_aa0a_fcead806b085" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\.vite\deps\_metadata.json" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_chunk_I4MZPW7S.js_30046f30_3b69_43bd_beb5_185542a3dcaf" Guid="cb4ba46a-71d0-4c58-94cb-045ef32b2c2a" Win64="no">
+                        <File Name="chunk-I4MZPW7S.js" Id="_chunk_I4MZPW7S.js_30046f30_3b69_43bd_beb5_185542a3dcaf" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\.vite\deps\chunk-I4MZPW7S.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_chunk_I4MZPW7S.js.map_ed4ed854_cf1d_4d64_a554_427bbf8803cc" Guid="430bda7b-4a1d-454a-b81e-05ed29f424c2" Win64="no">
+                        <File Name="chunk-I4MZPW7S.js.map" Id="_chunk_I4MZPW7S.js.map_ed4ed854_cf1d_4d64_a554_427bbf8803cc" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\.vite\deps\chunk-I4MZPW7S.js.map" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_chunk_XPR23Y44.js_705f6802_e4b4_434a_85dd_39e5191cb76b" Guid="c4937a27-ad05-41f3-95a0-d79562e357c4" Win64="no">
+                        <File Name="chunk-XPR23Y44.js" Id="_chunk_XPR23Y44.js_705f6802_e4b4_434a_85dd_39e5191cb76b" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\.vite\deps\chunk-XPR23Y44.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_chunk_XPR23Y44.js.map_cf922207_a18d_43c2_a375_63977ae02492" Guid="96f71740-f8d7-4071-ba9e-dc3025272ed8" Win64="no">
+                        <File Name="chunk-XPR23Y44.js.map" Id="_chunk_XPR23Y44.js.map_cf922207_a18d_43c2_a375_63977ae02492" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\.vite\deps\chunk-XPR23Y44.js.map" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_package.json_e0a5aa1f_8e81_4bbb_9289_79bd1737d760" Guid="4d6fe7a1-5c4d-424c-8d02-74c6084eb6f8" Win64="no">
+                        <File Name="package.json" Id="_package.json_e0a5aa1f_8e81_4bbb_9289_79bd1737d760" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\.vite\deps\package.json" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_dom.js_189d39ac_bdee_4720_b9f2_a2d4a0fb2897" Guid="a9622e78-45ec-46cc-8f69-67efbe2796b7" Win64="no">
+                        <File Name="react-dom.js" Id="_react_dom.js_189d39ac_bdee_4720_b9f2_a2d4a0fb2897" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\.vite\deps\react-dom.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_dom.js.map_0eca5951_5d68_484e_8738_c50bc587ef83" Guid="4329bd33-b1c3-41ba-b191-837addfadeff" Win64="no">
+                        <File Name="react-dom.js.map" Id="_react_dom.js.map_0eca5951_5d68_484e_8738_c50bc587ef83" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\.vite\deps\react-dom.js.map" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_dom_client.js_d7b21368_4751_4df2_a0b6_fcf04d30308f" Guid="780c5bae-fb6b-4461-ba15-d3fb28dc23ed" Win64="no">
+                        <File Name="react-dom_client.js" Id="_react_dom_client.js_d7b21368_4751_4df2_a0b6_fcf04d30308f" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\.vite\deps\react-dom_client.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_dom_client.js.map_b58196cb_c5fc_4083_9687_a09c54435893" Guid="5f27a233-8852-4b43-ae72-35290c82bdcf" Win64="no">
+                        <File Name="react-dom_client.js.map" Id="_react_dom_client.js.map_b58196cb_c5fc_4083_9687_a09c54435893" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\.vite\deps\react-dom_client.js.map" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_toastify.js_5fec95d8_581a_40a5_824b_878cf0fbcf85" Guid="c01eaab4-51d5-4de4-b338-94f36ef6b750" Win64="no">
+                        <File Name="react-toastify.js" Id="_react_toastify.js_5fec95d8_581a_40a5_824b_878cf0fbcf85" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\.vite\deps\react-toastify.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_toastify.js.map_f05fef90_79db_4782_9a77_1b9ccf76270c" Guid="d735e8d4-4c7c-4b32-8e54-a1a39304c893" Win64="no">
+                        <File Name="react-toastify.js.map" Id="_react_toastify.js.map_f05fef90_79db_4782_9a77_1b9ccf76270c" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\.vite\deps\react-toastify.js.map" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react.js_70b12ef0_6b93_46a8_a0f1_45f2c2de27b3" Guid="03f77966-5202-45ec-b4a8-aae2a7956c07" Win64="no">
+                        <File Name="react.js" Id="_react.js_70b12ef0_6b93_46a8_a0f1_45f2c2de27b3" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\.vite\deps\react.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react.js.map_974b97f1_eb95_48dd_af60_8786ee55e072" Guid="af38f761-5fb5-4e25-9706-c95339efcefb" Win64="no">
+                        <File Name="react.js.map" Id="_react.js.map_974b97f1_eb95_48dd_af60_8786ee55e072" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\.vite\deps\react.js.map" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_jsx_dev_runtime.js_3b6597a4_5c8d_4099_b50e_10ba66042dfb" Guid="b6459900-65a8-42e4-8b74-e076d6034a66" Win64="no">
+                        <File Name="react_jsx-dev-runtime.js" Id="_react_jsx_dev_runtime.js_3b6597a4_5c8d_4099_b50e_10ba66042dfb" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\.vite\deps\react_jsx-dev-runtime.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_jsx_dev_runtime.js.map_3ab9218e_39b9_485e_b2ce_0531d6d581c7" Guid="6e138810-7ace-47c9-ae6f-1610653a48a7" Win64="no">
+                        <File Name="react_jsx-dev-runtime.js.map" Id="_react_jsx_dev_runtime.js.map_3ab9218e_39b9_485e_b2ce_0531d6d581c7" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\.vite\deps\react_jsx-dev-runtime.js.map" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_jsx_runtime.js_b19d2406_2826_45c9_b6d8_1727a626cdea" Guid="d638316b-90db-4cb3-9430-adc02e8f182c" Win64="no">
+                        <File Name="react_jsx-runtime.js" Id="_react_jsx_runtime.js_b19d2406_2826_45c9_b6d8_1727a626cdea" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\.vite\deps\react_jsx-runtime.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_jsx_runtime.js.map_86541e32_94a8_4f1b_849b_af494b4d9942" Guid="66a7e4b1-0b7b-4eea-b8d4-63de1ab2b570" Win64="no">
+                        <File Name="react_jsx-runtime.js.map" Id="_react_jsx_runtime.js.map_86541e32_94a8_4f1b_849b_af494b4d9942" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\.vite\deps\react_jsx-runtime.js.map" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                    </Directory>
+                  </Directory>
+
+                  <Directory Id="_resources_app_node_modules__alloc_502bda28_82d9_44b4_9d3d_e993beb0efa1" Name="@alloc">
+
+                  </Directory>
+                  <Directory Id="__ampproject_d0683215_6d3f_413b_b61e_f66d1d2fd51b" Name="@ampproject">
+
+                  </Directory>
+                  <Directory Id="_resources_app_node_modules__babel_b7eaef3a_3543_4b67_9456_fb7966162a5f" Name="@babel">
+
+                  </Directory>
+                  <Directory Id="__bitdisaster_54844b2c_e2f9_4bfd_915c_3f915e663add" Name="@bitdisaster">
+
+                  </Directory>
+                  <Directory Id="__develar_e526b9cf_1b4f_41b4_86f1_9d6d373c17ee" Name="@develar">
+
+                  </Directory>
+                  <Directory Id="__electron_fdd50902_f2f5_44dd_be8b_2c27ccf7d577" Name="@electron">
+
+                  </Directory>
+                  <Directory Id="__esbuild_6b7b05e0_9602_4269_9b3d_71502f3a8808" Name="@esbuild">
+
+                  </Directory>
+                  <Directory Id="_resources_app_node_modules__eslint_3fb7f2c8_48e5_4f5c_9403_30d89719ba0d" Name="@eslint">
+
+                  </Directory>
+                  <Directory Id="__eslint_community_9022acc1_153c_4efb_8cde_1337fb57033c" Name="@eslint-community">
+
+                  </Directory>
+                  <Directory Id="__humanwhocodes_34954711_5788_42b0_bcbb_8cc3ad7b0667" Name="@humanwhocodes">
+
+                  </Directory>
+                  <Directory Id="_resources_app_node_modules__isaacs_23d4fd5e_25ab_4555_a46e_8c68327755df" Name="@isaacs">
+
+                  </Directory>
+                  <Directory Id="__jridgewell_95db4e58_0d42_4a02_95fb_c231b0cbe0dd" Name="@jridgewell">
+
+                  </Directory>
+                  <Directory Id="_resources_app_node_modules__malept_46a0e4e7_98e4_4baf_ac0f_d666e2f3290d" Name="@malept">
+
+                  </Directory>
+                  <Directory Id="__nodelib_3ca0f05e_7339_48d5_a1ad_a3541718bbad" Name="@nodelib">
+
+                  </Directory>
+                  <Directory Id="_resources_app_node_modules__pkgjs_a1084d68_9a71_4443_8847_38018953cac2" Name="@pkgjs">
+
+                  </Directory>
+                  <Directory Id="_resources_app_node_modules__rollup_f5aaf8e5_2443_4ad5_8efc_1c2ee4a6303a" Name="@rollup">
+
+                  </Directory>
+                  <Directory Id="__sindresorhus_dc324af0_9c14_43f0_8845_c1cb6d1a3016" Name="@sindresorhus">
+
+                  </Directory>
+                  <Directory Id="__szmarczak_1e7d9e68_b3ff_4cb5_b1d1_1eee71cb5901" Name="@szmarczak">
+
+                  </Directory>
+                  <Directory Id="__tailwindcss_9eb0f167_2d1d_4f11_90b2_07aba468dc3c" Name="@tailwindcss">
+
+                  </Directory>
+                  <Directory Id="__tootallnate_edfdaf70_0c92_4dd0_9a21_23cbef07e204" Name="@tootallnate">
+
+                  </Directory>
+                  <Directory Id="_resources_app_node_modules__types_5836d12e_09e7_4c5e_bb76_36d4f6bec7d3" Name="@types">
+
+                  </Directory>
+                  <Directory Id="__typescript_eslint_8e5d61d3_018f_43ea_aa0c_6250cf99ff3b" Name="@typescript-eslint">
+
+                  </Directory>
+                  <Directory Id="_resources_app_node_modules__ungap_df349641_313a_45ef_a457_96e8315bbb52" Name="@ungap">
+
+                  </Directory>
+                  <Directory Id="_resources_app_node_modules__vitejs_6932d4a3_af29_4bce_b2bb_d12eeec73bc7" Name="@vitejs">
+
+                  </Directory>
+                  <Directory Id="_resources_app_node_modules__xmldom_0108c79a_8c0b_4809_ab85_fb5e9eff43bf" Name="@xmldom">
+
+                  </Directory>
+                  <Directory Id="_resources_app_node_modules_clsx_e827746b_5cc4_4b8c_83fb_250da885c3d6" Name="clsx">
+                    <Directory Id="_dist_97978811_8105_4fcf_b29c_9022d5fbf8d8" Name="dist">
+                      <Component Id="_clsx.js_439128b4_3af4_4554_bf24_2d848513fccf" Guid="c0867391-9fd1-4145-aad8-8e218f60c9b7" Win64="no">
+                        <File Name="clsx.js" Id="_clsx.js_439128b4_3af4_4554_bf24_2d848513fccf" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\clsx\dist\clsx.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_clsx.min.js_0daaa27e_de8d_49f3_bff4_6f24bf09db68" Guid="a579d0d7-a4ca-4f52-809c-c406607fe14b" Win64="no">
+                        <File Name="clsx.min.js" Id="_clsx.min.js_0daaa27e_de8d_49f3_bff4_6f24bf09db68" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\clsx\dist\clsx.min.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_clsx.mjs_a6d3ee8a_c47b_42da_a3e2_9aa45700de6b" Guid="b93acc98-e5b2-4681-a0b7-0d2c1aa666a3" Win64="no">
+                        <File Name="clsx.mjs" Id="_clsx.mjs_a6d3ee8a_c47b_42da_a3e2_9aa45700de6b" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\clsx\dist\clsx.mjs" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_lite.js_58507778_6788_437f_93a0_30e567c4f4dd" Guid="338b1abb-7f76-44dc-97e3-1ae48c3b211c" Win64="no">
+                        <File Name="lite.js" Id="_lite.js_58507778_6788_437f_93a0_30e567c4f4dd" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\clsx\dist\lite.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_lite.mjs_db154cb8_c34a_4314_b0e2_e7c40bc821ad" Guid="f8dc4beb-39f3-4385-bad6-2b36b3d3c268" Win64="no">
+                        <File Name="lite.mjs" Id="_lite.mjs_db154cb8_c34a_4314_b0e2_e7c40bc821ad" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\clsx\dist\lite.mjs" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                    </Directory>                    <Component Id="_clsx.d.mts_3acb3414_3948_4939_82c0_3fb4b5d5ce3c" Guid="a9bbcc92-a4cb-4ac7-adc7-9d7e87534c56" Win64="no">
+                      <File Name="clsx.d.mts" Id="_clsx.d.mts_3acb3414_3948_4939_82c0_3fb4b5d5ce3c" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\clsx\clsx.d.mts" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_clsx.d.ts_981bf091_3f03_412f_82c8_0292226a59b6" Guid="32dda0b5-e37c-41e7-85ba-0ab8e00df139" Win64="no">
+                      <File Name="clsx.d.ts" Id="_clsx.d.ts_981bf091_3f03_412f_82c8_0292226a59b6" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\clsx\clsx.d.ts" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_license_c3f484c9_3504_4aff_909e_c990a5541a1b" Guid="226212ec-0f09-4b08-b76b-cf1d05f7f1fe" Win64="no">
+                      <File Name="license" Id="_license_c3f484c9_3504_4aff_909e_c990a5541a1b" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\clsx\license" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_package.json_73635649_7c2d_49dc_9d54_d211df928282" Guid="b95c9b65-d7dd-497e-b22f-d1f7720426bc" Win64="no">
+                      <File Name="package.json" Id="_package.json_73635649_7c2d_49dc_9d54_d211df928282" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\clsx\package.json" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_readme.md_ee1114a8_3118_4af2_a0d1_04a7328da4c8" Guid="fc22e6b0-376d-4b9b-904d-9beff106876e" Win64="no">
+                      <File Name="readme.md" Id="_readme.md_ee1114a8_3118_4af2_a0d1_04a7328da4c8" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\clsx\readme.md" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                  </Directory>
+
+                  <Directory Id="_resources_app_node_modules_dotenv_b37432eb_d0dc_4a08_b90e_aa57176b42ce" Name="dotenv">
+                    <Directory Id="_lib_be5881a0_c254_4366_8b29_0e6be8b170a9" Name="lib">
+                      <Component Id="_cli_options.js_56c7c855_1311_479e_9006_714e401a90cc" Guid="e0924a9e-5a5a-49fa-a3e5-a44f97727a2a" Win64="no">
+                        <File Name="cli-options.js" Id="_cli_options.js_56c7c855_1311_479e_9006_714e401a90cc" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\dotenv\lib\cli-options.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_env_options.js_4f0d4f4d_9dcd_4337_9934_482f9ac19f2f" Guid="8a5427b5-ddc1-4684-86a9-6af25ba50ba3" Win64="no">
+                        <File Name="env-options.js" Id="_env_options.js_4f0d4f4d_9dcd_4337_9934_482f9ac19f2f" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\dotenv\lib\env-options.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_main.d.ts_9feb5013_7170_40bc_96d6_ba9f3fdb7a01" Guid="e1ee2143-99a1-4ded-96f7-4ab46ecfe6c5" Win64="no">
+                        <File Name="main.d.ts" Id="_main.d.ts_9feb5013_7170_40bc_96d6_ba9f3fdb7a01" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\dotenv\lib\main.d.ts" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_main.js_6d80a86f_4bbd_4ded_8eb8_aafa1dbcaf3c" Guid="ea891146-7934-406a-8ade-6990168bd518" Win64="no">
+                        <File Name="main.js" Id="_main.js_6d80a86f_4bbd_4ded_8eb8_aafa1dbcaf3c" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\dotenv\lib\main.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                    </Directory>                    <Component Id="_CHANGELOG.md_cecf071e_4152_4bfe_835a_dced2d15f123" Guid="5e2730de-e9c3-4d11-bfc0-5e5a4e47a865" Win64="no">
+                      <File Name="CHANGELOG.md" Id="_CHANGELOG.md_cecf071e_4152_4bfe_835a_dced2d15f123" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\dotenv\CHANGELOG.md" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_LICENSE_4b17e0a0_2bdf_4b27_921e_64b60764653b" Guid="43c1db42-4d26-4da7-8b9f-b673c185d073" Win64="no">
+                      <File Name="LICENSE" Id="_LICENSE_4b17e0a0_2bdf_4b27_921e_64b60764653b" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\dotenv\LICENSE" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_README_es.md_eb057bc4_e533_44c6_8553_5836412cfc9b" Guid="9ce04582-7473-4f86-9da5-f92cbebaa2d8" Win64="no">
+                      <File Name="README-es.md" Id="_README_es.md_eb057bc4_e533_44c6_8553_5836412cfc9b" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\dotenv\README-es.md" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_README.md_887dee8d_921b_43c4_9205_16f3c942ac23" Guid="001332bc-c16d-4549-ac39-014209977bcb" Win64="no">
+                      <File Name="README.md" Id="_README.md_887dee8d_921b_43c4_9205_16f3c942ac23" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\dotenv\README.md" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_config.d.ts_d37f6288_e0ee_4883_81e7_f147457dbcab" Guid="060ac2d4-ef88-4dd4-807d-b35e326d8d93" Win64="no">
+                      <File Name="config.d.ts" Id="_config.d.ts_d37f6288_e0ee_4883_81e7_f147457dbcab" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\dotenv\config.d.ts" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_config.js_0f0edffb_8cc2_4ed4_bb40_b6bd604659ff" Guid="3472395d-526d-4be3-94ba-af279e5959fb" Win64="no">
+                      <File Name="config.js" Id="_config.js_0f0edffb_8cc2_4ed4_bb40_b6bd604659ff" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\dotenv\config.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_package.json_3fdf553f_bca6_4032_831f_8951c0b5367b" Guid="6a9eee1a-bcff-4603-b4f8-0fa39485e411" Win64="no">
+                      <File Name="package.json" Id="_package.json_3fdf553f_bca6_4032_831f_8951c0b5367b" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\dotenv\package.json" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                  </Directory>
+
+                  <Directory Id="_js_tokens_6e74f387_4bec_4857_847e_17cd7cf7614d" Name="js-tokens">
+                    <Component Id="_CHANGELOG.md_b37ac328_f4e3_482c_9a0b_57c08c6c9caf" Guid="94a20677-4a02-406a-9fb6-7d9fb5bbdf77" Win64="no">
+                      <File Name="CHANGELOG.md" Id="_CHANGELOG.md_b37ac328_f4e3_482c_9a0b_57c08c6c9caf" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\js-tokens\CHANGELOG.md" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_LICENSE_beb7691b_1789_4dd0_b261_9e3ae083557d" Guid="19bafb98-de86-47e0-beb6-ca9c60bde624" Win64="no">
+                      <File Name="LICENSE" Id="_LICENSE_beb7691b_1789_4dd0_b261_9e3ae083557d" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\js-tokens\LICENSE" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_README.md_bdf815a6_2edb_4a82_9039_f0ba8449295f" Guid="08e4c2a5-2f3c-4b65-94a4-4117852c4739" Win64="no">
+                      <File Name="README.md" Id="_README.md_bdf815a6_2edb_4a82_9039_f0ba8449295f" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\js-tokens\README.md" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_index.js_7fc3fdf4_7d12_4d47_97a4_510cec5b6632" Guid="31035683-a0ac-4f70-8a2f-dbe07f9e01f2" Win64="no">
+                      <File Name="index.js" Id="_index.js_7fc3fdf4_7d12_4d47_97a4_510cec5b6632" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\js-tokens\index.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_package.json_2522d8d2_7f47_4451_a41f_a4d883ed48fc" Guid="2ee3bc8f-e27d-49b9-821d-99f3867af900" Win64="no">
+                      <File Name="package.json" Id="_package.json_2522d8d2_7f47_4451_a41f_a4d883ed48fc" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\js-tokens\package.json" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                  </Directory>
+                  <Directory Id="_loose_envify_e9cfdf76_1e84_4d28_b725_5d8471058c22" Name="loose-envify">
+                    <Component Id="_LICENSE_d0341b85_777d_4c4a_9f71_2a1cd8b770c8" Guid="38a17da6-f776-409d-82cb-14b6ed55a625" Win64="no">
+                      <File Name="LICENSE" Id="_LICENSE_d0341b85_777d_4c4a_9f71_2a1cd8b770c8" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\loose-envify\LICENSE" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_README.md_79b2eed0_a3c5_47a9_a084_a4e073f7ed91" Guid="c8c7e414-8060-49f7-a085-8387a842ada0" Win64="no">
+                      <File Name="README.md" Id="_README.md_79b2eed0_a3c5_47a9_a084_a4e073f7ed91" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\loose-envify\README.md" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_cli.js_6e961518_9225_4c2a_9d33_5703b9bfe95b" Guid="4ab23b1f-0f2d-4ece-a40d-3aaac321d652" Win64="no">
+                      <File Name="cli.js" Id="_cli.js_6e961518_9225_4c2a_9d33_5703b9bfe95b" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\loose-envify\cli.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_custom.js_782f0d04_77e1_42fd_9456_49de926a8af0" Guid="9981af35-ac66-49f4-997e-3bda70a6b7c6" Win64="no">
+                      <File Name="custom.js" Id="_custom.js_782f0d04_77e1_42fd_9456_49de926a8af0" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\loose-envify\custom.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_index.js_0b4325d7_2722_4e96_bec8_73630595ca34" Guid="2a076625-d17e-425f-88d6-5d3ac20abbb4" Win64="no">
+                      <File Name="index.js" Id="_index.js_0b4325d7_2722_4e96_bec8_73630595ca34" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\loose-envify\index.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_loose_envify.js_32fb34bf_5927_4bf6_8b61_9abea0e91781" Guid="dd0a4420-a977-4ab2-9dc0-4cea24b3a1ca" Win64="no">
+                      <File Name="loose-envify.js" Id="_loose_envify.js_32fb34bf_5927_4bf6_8b61_9abea0e91781" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\loose-envify\loose-envify.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_package.json_347f7513_62b6_45cf_a6f9_2dfbe9ea924a" Guid="2ca47b27-36c7-4bb8-aeb2-87c45acecb94" Win64="no">
+                      <File Name="package.json" Id="_package.json_347f7513_62b6_45cf_a6f9_2dfbe9ea924a" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\loose-envify\package.json" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_replace.js_af31b804_a2e7_42ab_a2a5_7aff05007b14" Guid="5d006bda-c7fb-4fef-a05d-757c90cf15b7" Win64="no">
+                      <File Name="replace.js" Id="_replace.js_af31b804_a2e7_42ab_a2a5_7aff05007b14" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\loose-envify\replace.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                  </Directory>
+                  <Directory Id="_resources_app_node_modules_react_c469f866_be1c_4bc7_a1ca_399db953fea4" Name="react">
+                    <Directory Id="_cjs_0ddf0cc0_4d44_4fbc_a54a_ef38cea8f1c6" Name="cjs">
+                      <Component Id="_react_jsx_dev_runtime.development._da5e1b02_fc28_423c_b10e_330bae806c4b" Guid="cd407b9c-1901-4896-8999-ae1b3a8336bf" Win64="no">
+                        <File Name="react-jsx-dev-runtime.development.js" Id="_react_jsx_dev_runtime.development._da5e1b02_fc28_423c_b10e_330bae806c4b" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react\cjs\react-jsx-dev-runtime.development.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_jsx_dev_runtime.production.m_1dfeec37_4afa_40be_9eed_01098b0eaa8d" Guid="6ea49f17-9065-4e8d-93bc-59760165a339" Win64="no">
+                        <File Name="react-jsx-dev-runtime.production.min.js" Id="_react_jsx_dev_runtime.production.m_1dfeec37_4afa_40be_9eed_01098b0eaa8d" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react\cjs\react-jsx-dev-runtime.production.min.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_jsx_dev_runtime.profiling.mi_7d8ae520_6f2b_4693_9964_ce784c5a7f13" Guid="6db65b30-c1bf-494d-b9da-e05411e08085" Win64="no">
+                        <File Name="react-jsx-dev-runtime.profiling.min.js" Id="_react_jsx_dev_runtime.profiling.mi_7d8ae520_6f2b_4693_9964_ce784c5a7f13" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react\cjs\react-jsx-dev-runtime.profiling.min.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_jsx_runtime.development.js_779641a8_9b5e_434f_9e14_93564750ae59" Guid="468e7de2-dbc1-4996-88b9-44ca866ea2d7" Win64="no">
+                        <File Name="react-jsx-runtime.development.js" Id="_react_jsx_runtime.development.js_779641a8_9b5e_434f_9e14_93564750ae59" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react\cjs\react-jsx-runtime.development.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_jsx_runtime.production.min.j_562427d4_61bd_42d6_a371_995bf9ada5d5" Guid="83237b69-d9c5-4f62-b084-ebbc3ebd0731" Win64="no">
+                        <File Name="react-jsx-runtime.production.min.js" Id="_react_jsx_runtime.production.min.j_562427d4_61bd_42d6_a371_995bf9ada5d5" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react\cjs\react-jsx-runtime.production.min.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_jsx_runtime.profiling.min.js_d54523e6_5b29_4aef_9183_3cb23fa6a275" Guid="fcb4dd61-5f37-4361-91d7-6ca28dd96088" Win64="no">
+                        <File Name="react-jsx-runtime.profiling.min.js" Id="_react_jsx_runtime.profiling.min.js_d54523e6_5b29_4aef_9183_3cb23fa6a275" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react\cjs\react-jsx-runtime.profiling.min.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react.development.js_84af01ee_544b_40a0_920d_749b10c1e7cd" Guid="c2a521b1-f4e5-4478-9d80-2f86cd7750f4" Win64="no">
+                        <File Name="react.development.js" Id="_react.development.js_84af01ee_544b_40a0_920d_749b10c1e7cd" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react\cjs\react.development.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react.production.min.js_6742b423_ee0c_46ea_99bf_8f9bc6f3fba1" Guid="883dd69c-c4d1-44f1-84a2-22d4d4577107" Win64="no">
+                        <File Name="react.production.min.js" Id="_react.production.min.js_6742b423_ee0c_46ea_99bf_8f9bc6f3fba1" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react\cjs\react.production.min.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react.shared_subset.development.js_77adb2b1_9996_42f4_a7d3_c091de88a8b5" Guid="464a59e4-5085-4446-aaf2-c88f5c93ff50" Win64="no">
+                        <File Name="react.shared-subset.development.js" Id="_react.shared_subset.development.js_77adb2b1_9996_42f4_a7d3_c091de88a8b5" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react\cjs\react.shared-subset.development.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react.shared_subset.production.min_55508c7a_8ebb_4bcf_8271_1a06f717c9e3" Guid="804dd807-3ba9-4c3a-a070-6bfd9ad5529d" Win64="no">
+                        <File Name="react.shared-subset.production.min.js" Id="_react.shared_subset.production.min_55508c7a_8ebb_4bcf_8271_1a06f717c9e3" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react\cjs\react.shared-subset.production.min.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                    </Directory>
+                    <Directory Id="_umd_c56e3108_0162_4040_9f6e_8f60c7941fef" Name="umd">
+                      <Component Id="_react.development.js_04d9c9dd_9689_4185_90e4_4ca2de98dc74" Guid="9750bcf8-e5de-4170-a907-08fdc3362cae" Win64="no">
+                        <File Name="react.development.js" Id="_react.development.js_04d9c9dd_9689_4185_90e4_4ca2de98dc74" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react\umd\react.development.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react.production.min.js_f845cb9f_9780_4ead_8231_583d1f5085fa" Guid="56d76a30-0a4b-4142-b47f-97c849ed7abc" Win64="no">
+                        <File Name="react.production.min.js" Id="_react.production.min.js_f845cb9f_9780_4ead_8231_583d1f5085fa" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react\umd\react.production.min.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react.profiling.min.js_aef142ac_1c5c_48fd_a300_3fddd823a7aa" Guid="4bc6ff1a-787e-463c-9cb9-b02a62f25c8b" Win64="no">
+                        <File Name="react.profiling.min.js" Id="_react.profiling.min.js_aef142ac_1c5c_48fd_a300_3fddd823a7aa" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react\umd\react.profiling.min.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                    </Directory>                    <Component Id="_LICENSE_47371f13_2518_49d8_ba26_02ba3bd3f61f" Guid="7d33a9bb-41d7-4e5c-a401-52bfb4530b15" Win64="no">
+                      <File Name="LICENSE" Id="_LICENSE_47371f13_2518_49d8_ba26_02ba3bd3f61f" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react\LICENSE" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_README.md_66ad41e9_3be7_44cf_ac00_563baff74965" Guid="58527d70-4057-4389-94c5-e26a265da16a" Win64="no">
+                      <File Name="README.md" Id="_README.md_66ad41e9_3be7_44cf_ac00_563baff74965" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react\README.md" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_index.js_951d81f8_6548_40d3_9137_c15e5cdc919a" Guid="a0856004-137d-4e2e-bcf0-899903173b99" Win64="no">
+                      <File Name="index.js" Id="_index.js_951d81f8_6548_40d3_9137_c15e5cdc919a" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react\index.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_jsx_dev_runtime.js_68ba37a2_8b2b_47f9_b253_28c69d68f912" Guid="4eacd4af-3462-4dc4-b0d8-20d19677ddfd" Win64="no">
+                      <File Name="jsx-dev-runtime.js" Id="_jsx_dev_runtime.js_68ba37a2_8b2b_47f9_b253_28c69d68f912" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react\jsx-dev-runtime.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_jsx_runtime.js_9fdb255b_f02f_4e22_bb08_c626c3a0294a" Guid="ebdf138e-1605-4ee8-b4ca-58fd0f01e38d" Win64="no">
+                      <File Name="jsx-runtime.js" Id="_jsx_runtime.js_9fdb255b_f02f_4e22_bb08_c626c3a0294a" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react\jsx-runtime.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_package.json_0fed3d0c_4f29_4f71_ad40_0b493cc0c819" Guid="f82d6f24-49ea-49ce-8ca4-1db45e8fb4e0" Win64="no">
+                      <File Name="package.json" Id="_package.json_0fed3d0c_4f29_4f71_ad40_0b493cc0c819" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react\package.json" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_react.shared_subset.js_fbbfec8b_2d46_477d_9a91_5cb818df89f9" Guid="9cfad539-4cac-440d-aa67-e00e69346aa2" Win64="no">
+                      <File Name="react.shared-subset.js" Id="_react.shared_subset.js_fbbfec8b_2d46_477d_9a91_5cb818df89f9" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react\react.shared-subset.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                  </Directory>
+
+                  <Directory Id="_react_dom_d6886f13_0b61_41d4_b43c_1ca78006d665" Name="react-dom">
+                    <Directory Id="_cjs_f8e2341b_191c_4ed3_be42_34591c785ac6" Name="cjs">
+                      <Component Id="_react_dom_server_legacy.browser.de_7d48e110_bc5e_44fe_bc96_c096920f140d" Guid="37345b9c-689e-49ce-bf10-a416b7fe8a94" Win64="no">
+                        <File Name="react-dom-server-legacy.browser.development.js" Id="_react_dom_server_legacy.browser.de_7d48e110_bc5e_44fe_bc96_c096920f140d" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\cjs\react-dom-server-legacy.browser.development.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_dom_server_legacy.browser.pr_f67c4478_f6b5_4506_ae20_f7de009b5d75" Guid="f204dba9-e8d3-4183-bf9e-a4d82b858840" Win64="no">
+                        <File Name="react-dom-server-legacy.browser.production.min.js" Id="_react_dom_server_legacy.browser.pr_f67c4478_f6b5_4506_ae20_f7de009b5d75" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\cjs\react-dom-server-legacy.browser.production.min.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_dom_server_legacy.node.devel_4eabc18f_ddac_4415_b825_b11d724e4b16" Guid="b5926c3f-73cf-40bd-b270-58ca7aefe265" Win64="no">
+                        <File Name="react-dom-server-legacy.node.development.js" Id="_react_dom_server_legacy.node.devel_4eabc18f_ddac_4415_b825_b11d724e4b16" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\cjs\react-dom-server-legacy.node.development.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_dom_server_legacy.node.produ_ce37bc0c_785f_41d8_873c_cae00cb9d60f" Guid="27fdb9cd-d8aa-4f27-bcc7-fdd95a211e7f" Win64="no">
+                        <File Name="react-dom-server-legacy.node.production.min.js" Id="_react_dom_server_legacy.node.produ_ce37bc0c_785f_41d8_873c_cae00cb9d60f" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\cjs\react-dom-server-legacy.node.production.min.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_dom_server.browser.developme_fce5ec2b_564c_4c47_95ee_c5fa5e68a88c" Guid="cb2b188c-6823-4b48-b6d0-c021bfd7249f" Win64="no">
+                        <File Name="react-dom-server.browser.development.js" Id="_react_dom_server.browser.developme_fce5ec2b_564c_4c47_95ee_c5fa5e68a88c" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\cjs\react-dom-server.browser.development.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_dom_server.browser.productio_a17ffc84_76ed_4a10_8879_09ce4b7a047d" Guid="50649bd0-3bbc-40ab-bd77-0e24604d233b" Win64="no">
+                        <File Name="react-dom-server.browser.production.min.js" Id="_react_dom_server.browser.productio_a17ffc84_76ed_4a10_8879_09ce4b7a047d" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\cjs\react-dom-server.browser.production.min.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_dom_server.node.development._88d19f86_7c92_4166_8dd7_cb62ca40faf3" Guid="ee228553-a450-45af-9c37-ad0d49a8d951" Win64="no">
+                        <File Name="react-dom-server.node.development.js" Id="_react_dom_server.node.development._88d19f86_7c92_4166_8dd7_cb62ca40faf3" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\cjs\react-dom-server.node.development.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_dom_server.node.production.m_101c6de3_757d_4043_9b7c_3f72625b74f8" Guid="ea7a2931-c08c-4963-bbeb-ba7340215899" Win64="no">
+                        <File Name="react-dom-server.node.production.min.js" Id="_react_dom_server.node.production.m_101c6de3_757d_4043_9b7c_3f72625b74f8" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\cjs\react-dom-server.node.production.min.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_dom_test_utils.development.j_edc2e4e1_a68a_47a2_b755_89cea2a8a787" Guid="701149e2-c841-447f-8fb4-59ef7b883455" Win64="no">
+                        <File Name="react-dom-test-utils.development.js" Id="_react_dom_test_utils.development.j_edc2e4e1_a68a_47a2_b755_89cea2a8a787" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\cjs\react-dom-test-utils.development.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_dom_test_utils.production.mi_4eec4f35_184f_4c7d_bf54_acda972d4381" Guid="97fc0e3d-7913-4824-ae4b-438e1ecb5499" Win64="no">
+                        <File Name="react-dom-test-utils.production.min.js" Id="_react_dom_test_utils.production.mi_4eec4f35_184f_4c7d_bf54_acda972d4381" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\cjs\react-dom-test-utils.production.min.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_dom.development.js_ea184bda_b734_46a6_8028_b2caf41d9e65" Guid="bb234061-a17e-4097-813e-00c8d1e06c1e" Win64="no">
+                        <File Name="react-dom.development.js" Id="_react_dom.development.js_ea184bda_b734_46a6_8028_b2caf41d9e65" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\cjs\react-dom.development.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_dom.production.min.js_b1a0ba19_8734_43f1_8129_3198d3403893" Guid="c0033486-8a78-4512-815e-de6961c5bfb6" Win64="no">
+                        <File Name="react-dom.production.min.js" Id="_react_dom.production.min.js_b1a0ba19_8734_43f1_8129_3198d3403893" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\cjs\react-dom.production.min.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_dom.profiling.min.js_0aa55431_c9a9_41b7_acc6_d57c1da29d9d" Guid="ec95de04-b584-4664-b919-85b7df94469a" Win64="no">
+                        <File Name="react-dom.profiling.min.js" Id="_react_dom.profiling.min.js_0aa55431_c9a9_41b7_acc6_d57c1da29d9d" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\cjs\react-dom.profiling.min.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                    </Directory>
+                    <Directory Id="_umd_f6f5660f_6a2e_40ac_96b2_bdfda2534127" Name="umd">
+                      <Component Id="_react_dom_server_legacy.browser.de_a6d794a5_91ca_46eb_921b_0083c058a302" Guid="7c55799a-c8b8-4657-9c99-4a92778aaba7" Win64="no">
+                        <File Name="react-dom-server-legacy.browser.development.js" Id="_react_dom_server_legacy.browser.de_a6d794a5_91ca_46eb_921b_0083c058a302" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\umd\react-dom-server-legacy.browser.development.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_dom_server_legacy.browser.pr_3b437702_dec9_4e09_8447_d210626f47da" Guid="626d2cee-555f-4015-8f00-92e052806865" Win64="no">
+                        <File Name="react-dom-server-legacy.browser.production.min.js" Id="_react_dom_server_legacy.browser.pr_3b437702_dec9_4e09_8447_d210626f47da" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\umd\react-dom-server-legacy.browser.production.min.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_dom_server.browser.developme_b1eb161b_becb_4bd0_a975_69f664c68439" Guid="ff1e7731-4264-4dc0-89a4-b8b1edeb06a6" Win64="no">
+                        <File Name="react-dom-server.browser.development.js" Id="_react_dom_server.browser.developme_b1eb161b_becb_4bd0_a975_69f664c68439" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\umd\react-dom-server.browser.development.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_dom_server.browser.productio_c3f98b33_620a_4adc_9f9f_e71b14d5575d" Guid="e8dba03d-747a-45d3-94af-adbeb17614c4" Win64="no">
+                        <File Name="react-dom-server.browser.production.min.js" Id="_react_dom_server.browser.productio_c3f98b33_620a_4adc_9f9f_e71b14d5575d" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\umd\react-dom-server.browser.production.min.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_dom_test_utils.development.j_2a1c3386_5ec6_4ede_baf7_5c72464550a8" Guid="bce0e7ab-c60d-4210-8396-a4f9049a337d" Win64="no">
+                        <File Name="react-dom-test-utils.development.js" Id="_react_dom_test_utils.development.j_2a1c3386_5ec6_4ede_baf7_5c72464550a8" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\umd\react-dom-test-utils.development.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_dom_test_utils.production.mi_731ea583_d1c5_40f5_a5eb_56a1d284eaf4" Guid="cbc61434-c8e0-4b10-925b-f782134aa5ee" Win64="no">
+                        <File Name="react-dom-test-utils.production.min.js" Id="_react_dom_test_utils.production.mi_731ea583_d1c5_40f5_a5eb_56a1d284eaf4" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\umd\react-dom-test-utils.production.min.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_dom.development.js_9876c841_2025_4d0e_ac45_8996c89bac9c" Guid="1c203287-7433-4971-b242-552ca705816c" Win64="no">
+                        <File Name="react-dom.development.js" Id="_react_dom.development.js_9876c841_2025_4d0e_ac45_8996c89bac9c" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\umd\react-dom.development.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_dom.production.min.js_d37a0481_c32d_4ffd_a741_b40e3ba162be" Guid="0cf060a1-3ef1-43c4-8a8a-0fb9a3651112" Win64="no">
+                        <File Name="react-dom.production.min.js" Id="_react_dom.production.min.js_d37a0481_c32d_4ffd_a741_b40e3ba162be" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\umd\react-dom.production.min.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_react_dom.profiling.min.js_10ab2237_8855_4ab5_9b41_50164aa779cc" Guid="a59b921d-1dd6-4fa9-9259-687720f9f82b" Win64="no">
+                        <File Name="react-dom.profiling.min.js" Id="_react_dom.profiling.min.js_10ab2237_8855_4ab5_9b41_50164aa779cc" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\umd\react-dom.profiling.min.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                    </Directory>                    <Component Id="_LICENSE_82f6c38d_6bcc_4ae7_a570_05e47561b96b" Guid="fb8760bb-a796-4803-b5c2-ccccc39522cf" Win64="no">
+                      <File Name="LICENSE" Id="_LICENSE_82f6c38d_6bcc_4ae7_a570_05e47561b96b" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\LICENSE" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_README.md_b4cccc25_6518_4cca_ae48_4ae4747a0198" Guid="22d351cb-97b0-4234-967b-169bb9c95a6c" Win64="no">
+                      <File Name="README.md" Id="_README.md_b4cccc25_6518_4cca_ae48_4ae4747a0198" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\README.md" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_client.js_10fc6f2d_6ce9_48b7_9554_7c7d77007175" Guid="7a10e11c-7655-48d6-ac84-c42f2bb02bba" Win64="no">
+                      <File Name="client.js" Id="_client.js_10fc6f2d_6ce9_48b7_9554_7c7d77007175" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\client.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_index.js_d16a8d2d_e790_436b_9994_c094fd5aae7f" Guid="34e1cf02-6111-4f70-b1aa-f84e72bc68e1" Win64="no">
+                      <File Name="index.js" Id="_index.js_d16a8d2d_e790_436b_9994_c094fd5aae7f" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\index.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_package.json_580b3f56_da8c_4852_91ee_eb7265d08aac" Guid="ea917be4-9297-4a9b-be1f-8766c268707d" Win64="no">
+                      <File Name="package.json" Id="_package.json_580b3f56_da8c_4852_91ee_eb7265d08aac" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\package.json" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_profiling.js_5a75310c_cef5_4cfe_b039_88d12d1cdd27" Guid="29fa39c6-26cc-4f77-9a17-0d5cd7de3eab" Win64="no">
+                      <File Name="profiling.js" Id="_profiling.js_5a75310c_cef5_4cfe_b039_88d12d1cdd27" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\profiling.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_server.browser.js_682dc176_2056_47ce_b329_f06f8183b6c4" Guid="41da2e4b-2107-49b7-a60b-507e283ca961" Win64="no">
+                      <File Name="server.browser.js" Id="_server.browser.js_682dc176_2056_47ce_b329_f06f8183b6c4" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\server.browser.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_server.js_109844c7_91bf_4306_aee6_63b999a424a8" Guid="851dd4f7-d2a1-4942-9f5f-f9b0fa929358" Win64="no">
+                      <File Name="server.js" Id="_server.js_109844c7_91bf_4306_aee6_63b999a424a8" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\server.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_server.node.js_d7241ed1_d055_4baf_b347_fe1de9a29c39" Guid="61f05120-a3f7-48a7-8d29-fffd455a1709" Win64="no">
+                      <File Name="server.node.js" Id="_server.node.js_d7241ed1_d055_4baf_b347_fe1de9a29c39" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\server.node.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_test_utils.js_f161ff2b_e6cf_4262_853d_085f554aee88" Guid="5e6a3a85-883c-412f-a11a-108c5c40258c" Win64="no">
+                      <File Name="test-utils.js" Id="_test_utils.js_f161ff2b_e6cf_4262_853d_085f554aee88" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-dom\test-utils.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                  </Directory>
+
+                  <Directory Id="_react_toastify_744b9f6c_3ef1_4cca_a6af_d4e6536925ff" Name="react-toastify">
+                    <Directory Id="_addons_d552fb69_dd37_4e6c_8392_ae9f8c249d97" Name="addons">
+                      <Directory Id="_use_notification_center_748eb8c1_c129_4fa0_a63d_1fb00e347f84" Name="use-notification-center">
+                        <Component Id="_index.d.mts_c8fbdeed_6c5f_4a0e_915a_18484bf9bbc9" Guid="91033223-acc5-48b5-9e72-98889395d85b" Win64="no">
+                          <File Name="index.d.mts" Id="_index.d.mts_c8fbdeed_6c5f_4a0e_915a_18484bf9bbc9" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-toastify\addons\use-notification-center\index.d.mts" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                        </Component>
+                        <Component Id="_index.d.ts_50d82dba_af6c_4985_867c_720d05d9e563" Guid="67e2d8cb-dbce-4f37-af2d-e5c676c52792" Win64="no">
+                          <File Name="index.d.ts" Id="_index.d.ts_50d82dba_af6c_4985_867c_720d05d9e563" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-toastify\addons\use-notification-center\index.d.ts" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                        </Component>
+                        <Component Id="_index.js_e4d7e72b_b1df_4fcd_96e9_b6745da0f157" Guid="c8c02e34-2d83-4b0f-a9b9-6d6eae63f2d7" Win64="no">
+                          <File Name="index.js" Id="_index.js_e4d7e72b_b1df_4fcd_96e9_b6745da0f157" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-toastify\addons\use-notification-center\index.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                        </Component>
+                        <Component Id="_index.js.map_f1384aea_4a40_4491_b166_10554f700c29" Guid="a6eca2ae-9329-4537-bdfe-55815448ae95" Win64="no">
+                          <File Name="index.js.map" Id="_index.js.map_f1384aea_4a40_4491_b166_10554f700c29" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-toastify\addons\use-notification-center\index.js.map" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                        </Component>
+                        <Component Id="_index.mjs_f165b4dc_23d2_40e1_98dd_c82ab7198091" Guid="e1c87a89-08bc-4e1b-859c-1c73b3e6973c" Win64="no">
+                          <File Name="index.mjs" Id="_index.mjs_f165b4dc_23d2_40e1_98dd_c82ab7198091" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-toastify\addons\use-notification-center\index.mjs" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                        </Component>
+                        <Component Id="_index.mjs.map_22613b9d_dcef_4caf_a838_1a2355084b84" Guid="4102a090-d1b7-467f-9276-acc0bfe6e010" Win64="no">
+                          <File Name="index.mjs.map" Id="_index.mjs.map_22613b9d_dcef_4caf_a838_1a2355084b84" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-toastify\addons\use-notification-center\index.mjs.map" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                        </Component>
+                      </Directory>
+                    </Directory>
+
+                    <Directory Id="_dist_0e134a54_24dd_43d4_96bb_cdca27aac973" Name="dist">
+                      <Component Id="_ReactToastify.css_33d4ae23_27f4_4265_b324_d61e85a9a077" Guid="8443dc85-9a81-4710-b64e-7485f6153521" Win64="no">
+                        <File Name="ReactToastify.css" Id="_ReactToastify.css_33d4ae23_27f4_4265_b324_d61e85a9a077" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-toastify\dist\ReactToastify.css" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_index.d.mts_86e995a4_7e9e_45cf_995e_d90a6e9d6748" Guid="7b14c106-9818-4be7-b3d0-9f72d3d15473" Win64="no">
+                        <File Name="index.d.mts" Id="_index.d.mts_86e995a4_7e9e_45cf_995e_d90a6e9d6748" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-toastify\dist\index.d.mts" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_index.d.ts_1365944d_7e71_438e_af79_477365262353" Guid="ab961d90-96ce-4d40-9e91-39af7154f911" Win64="no">
+                        <File Name="index.d.ts" Id="_index.d.ts_1365944d_7e71_438e_af79_477365262353" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-toastify\dist\index.d.ts" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_index.js_38e202a5_57f4_47c6_afc4_48f0c844b7ae" Guid="1f31de75-dca3-4a68-9ca6-7e26158d155f" Win64="no">
+                        <File Name="index.js" Id="_index.js_38e202a5_57f4_47c6_afc4_48f0c844b7ae" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-toastify\dist\index.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_index.js.map_cd691a54_9035_4152_b784_816d6903a23f" Guid="48b11570-1aab-4218-bd64-5c286c2c1311" Win64="no">
+                        <File Name="index.js.map" Id="_index.js.map_cd691a54_9035_4152_b784_816d6903a23f" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-toastify\dist\index.js.map" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_index.mjs_02bce6e7_582b_4c11_bfb8_d8c24ad256a9" Guid="4ae90d6a-ba39-4a67-afe6-4130fd50e8d9" Win64="no">
+                        <File Name="index.mjs" Id="_index.mjs_02bce6e7_582b_4c11_bfb8_d8c24ad256a9" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-toastify\dist\index.mjs" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_index.mjs.map_fec38450_1d40_4742_ac4c_fe105c78738c" Guid="4867b32d-96a5-4053-a734-6162a7e6e1c2" Win64="no">
+                        <File Name="index.mjs.map" Id="_index.mjs.map_fec38450_1d40_4742_ac4c_fe105c78738c" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-toastify\dist\index.mjs.map" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_unstyled.d.mts_d406b914_d8d7_46f8_873f_38972ef2b715" Guid="302e5a14-2dfa-4e61-ad81-b8f20438d330" Win64="no">
+                        <File Name="unstyled.d.mts" Id="_unstyled.d.mts_d406b914_d8d7_46f8_873f_38972ef2b715" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-toastify\dist\unstyled.d.mts" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_unstyled.d.ts_2115a5d0_816a_48af_aef9_afe724ca47c9" Guid="a8a43089-02b0-4120-a0c7-609be246dda8" Win64="no">
+                        <File Name="unstyled.d.ts" Id="_unstyled.d.ts_2115a5d0_816a_48af_aef9_afe724ca47c9" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-toastify\dist\unstyled.d.ts" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_unstyled.js_16bdaed2_9aea_4ba4_b6fb_f2d4781d8b63" Guid="9a07df6c-0381-461a-864f-71c0dafd4ddb" Win64="no">
+                        <File Name="unstyled.js" Id="_unstyled.js_16bdaed2_9aea_4ba4_b6fb_f2d4781d8b63" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-toastify\dist\unstyled.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_unstyled.js.map_e008d83c_fc6e_4c88_9444_13ddb5e74fb1" Guid="119595e2-7ce4-4863-ab84-b63d2728f7dc" Win64="no">
+                        <File Name="unstyled.js.map" Id="_unstyled.js.map_e008d83c_fc6e_4c88_9444_13ddb5e74fb1" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-toastify\dist\unstyled.js.map" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_unstyled.mjs_8d23a293_97a2_4431_a6a2_35fdfe7a1191" Guid="1d792e6a-859a-42c4-800a-77a4fb4a5e8e" Win64="no">
+                        <File Name="unstyled.mjs" Id="_unstyled.mjs_8d23a293_97a2_4431_a6a2_35fdfe7a1191" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-toastify\dist\unstyled.mjs" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_unstyled.mjs.map_278d9dd0_e459_4a05_b7ea_c77d535bca89" Guid="fd422542-6dc0-416b-956f-2e7a089aa2dc" Win64="no">
+                        <File Name="unstyled.mjs.map" Id="_unstyled.mjs.map_278d9dd0_e459_4a05_b7ea_c77d535bca89" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-toastify\dist\unstyled.mjs.map" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                    </Directory>                    <Component Id="_LICENSE_ba49bff1_934f_4a94_b3b0_e36fa09a6ba9" Guid="0e533d1c-3398-4e11-961e-8cc75bbd0cdf" Win64="no">
+                      <File Name="LICENSE" Id="_LICENSE_ba49bff1_934f_4a94_b3b0_e36fa09a6ba9" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-toastify\LICENSE" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_README.md_51e73171_7035_4290_8ece_a17c7ae3ab3e" Guid="c86f99f2-a25d-40ee-8589-f728c0557a25" Win64="no">
+                      <File Name="README.md" Id="_README.md_51e73171_7035_4290_8ece_a17c7ae3ab3e" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-toastify\README.md" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_package.json_b197f93c_136a_48d2_8334_38de9fd55a35" Guid="01cb7ad9-be30-4703-a9b7-9a5677597668" Win64="no">
+                      <File Name="package.json" Id="_package.json_b197f93c_136a_48d2_8334_38de9fd55a35" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\react-toastify\package.json" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                  </Directory>
+
+                  <Directory Id="_scheduler_245954f8_b6cf_4823_8b43_b7a9ebfba278" Name="scheduler">
+                    <Directory Id="_cjs_8a21ff1e_861f_4d14_98af_3b398e8d9bbf" Name="cjs">
+                      <Component Id="_scheduler_unstable_mock.developmen_b4a4e067_a0c1_4386_8b3c_c9abba635490" Guid="9834218c-e96b-4be9-96fb-e412c858787e" Win64="no">
+                        <File Name="scheduler-unstable_mock.development.js" Id="_scheduler_unstable_mock.developmen_b4a4e067_a0c1_4386_8b3c_c9abba635490" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\scheduler\cjs\scheduler-unstable_mock.development.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_scheduler_unstable_mock.production_c92204df_6c7f_4658_9212_dea1053d936d" Guid="7b2a78d5-35b2-4ffe-a152-d208e36508e6" Win64="no">
+                        <File Name="scheduler-unstable_mock.production.min.js" Id="_scheduler_unstable_mock.production_c92204df_6c7f_4658_9212_dea1053d936d" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\scheduler\cjs\scheduler-unstable_mock.production.min.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_scheduler_unstable_post_task.devel_7cb59e42_e89d_4ce0_8bbb_0f9ff8303e0d" Guid="79d1b61c-6d95-4c80-aad6-ddc5ee9383e2" Win64="no">
+                        <File Name="scheduler-unstable_post_task.development.js" Id="_scheduler_unstable_post_task.devel_7cb59e42_e89d_4ce0_8bbb_0f9ff8303e0d" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\scheduler\cjs\scheduler-unstable_post_task.development.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_scheduler_unstable_post_task.produ_160791ee_a265_4c89_a222_143bca91ebf4" Guid="3e09fd41-42b7-42d9-8cea-ed1c5c39ae0a" Win64="no">
+                        <File Name="scheduler-unstable_post_task.production.min.js" Id="_scheduler_unstable_post_task.produ_160791ee_a265_4c89_a222_143bca91ebf4" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\scheduler\cjs\scheduler-unstable_post_task.production.min.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_scheduler.development.js_79e09397_874b_4a55_8445_938407b1b677" Guid="fbdc51a1-6d09-4775-a0f2-69d11acf4864" Win64="no">
+                        <File Name="scheduler.development.js" Id="_scheduler.development.js_79e09397_874b_4a55_8445_938407b1b677" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\scheduler\cjs\scheduler.development.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_scheduler.production.min.js_c2d01e43_8e4b_42f5_aa49_d39ab28678cc" Guid="bc62772e-e18f-470a-98c9-07fd1daabbf0" Win64="no">
+                        <File Name="scheduler.production.min.js" Id="_scheduler.production.min.js_c2d01e43_8e4b_42f5_aa49_d39ab28678cc" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\scheduler\cjs\scheduler.production.min.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                    </Directory>
+                    <Directory Id="_umd_187e1d07_ebd5_4dd4_9d4a_806c30db54d1" Name="umd">
+                      <Component Id="_scheduler_unstable_mock.developmen_776d540a_8181_4edf_aebf_223fb33e5512" Guid="bedcdfc2-6fe1-4fb3-b245-8ca712822cc4" Win64="no">
+                        <File Name="scheduler-unstable_mock.development.js" Id="_scheduler_unstable_mock.developmen_776d540a_8181_4edf_aebf_223fb33e5512" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\scheduler\umd\scheduler-unstable_mock.development.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_scheduler_unstable_mock.production_3b293058_761a_43f8_9437_abeffd25de40" Guid="fe465bfb-9b8b-4c24-89ab-0eaa082e8073" Win64="no">
+                        <File Name="scheduler-unstable_mock.production.min.js" Id="_scheduler_unstable_mock.production_3b293058_761a_43f8_9437_abeffd25de40" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\scheduler\umd\scheduler-unstable_mock.production.min.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_scheduler.development.js_b70165bb_9216_4575_a41f_70d6e5297db6" Guid="ce582e4a-e276-4e73-aa2c-e789f3717d1a" Win64="no">
+                        <File Name="scheduler.development.js" Id="_scheduler.development.js_b70165bb_9216_4575_a41f_70d6e5297db6" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\scheduler\umd\scheduler.development.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_scheduler.production.min.js_97c331e2_41cc_43e8_8dcc_bd447ab3018d" Guid="134260e0-6849-4bf7-9611-3bfb2115cf3d" Win64="no">
+                        <File Name="scheduler.production.min.js" Id="_scheduler.production.min.js_97c331e2_41cc_43e8_8dcc_bd447ab3018d" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\scheduler\umd\scheduler.production.min.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                      <Component Id="_scheduler.profiling.min.js_158e4b74_9725_49fa_8885_6d27b472c7d7" Guid="ebb24140-ad51-4dda-ad63-e1aa774d398a" Win64="no">
+                        <File Name="scheduler.profiling.min.js" Id="_scheduler.profiling.min.js_158e4b74_9725_49fa_8885_6d27b472c7d7" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\scheduler\umd\scheduler.profiling.min.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                      </Component>
+                    </Directory>                    <Component Id="_LICENSE_42a828e9_0594_47ed_9948_4fbeeddaa7d6" Guid="9126b7d3-b11f-4449-97d3-e078c3af4067" Win64="no">
+                      <File Name="LICENSE" Id="_LICENSE_42a828e9_0594_47ed_9948_4fbeeddaa7d6" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\scheduler\LICENSE" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_README.md_84b6510e_8e9f_4cbc_9f18_4b862c5a03a3" Guid="5e9494ba-354b-4ca2-ba11-39b0b7db6e85" Win64="no">
+                      <File Name="README.md" Id="_README.md_84b6510e_8e9f_4cbc_9f18_4b862c5a03a3" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\scheduler\README.md" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_index.js_49c29cbb_fe83_4cbc_9bc1_aa84a411b991" Guid="4a429a20-e98f-4f25-9a4b-0abdf0177338" Win64="no">
+                      <File Name="index.js" Id="_index.js_49c29cbb_fe83_4cbc_9bc1_aa84a411b991" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\scheduler\index.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_package.json_d5b54557_4161_464d_9935_776d03752d67" Guid="e247cdc7-fef0-4ddd-8071-6e2af651f46b" Win64="no">
+                      <File Name="package.json" Id="_package.json_d5b54557_4161_464d_9935_776d03752d67" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\scheduler\package.json" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_unstable_mock.js_e3c6de75_7cb2_453e_a6c6_6cc46ec09a79" Guid="c3825b59-2cbc-428d-9455-474c2bc6aac6" Win64="no">
+                      <File Name="unstable_mock.js" Id="_unstable_mock.js_e3c6de75_7cb2_453e_a6c6_6cc46ec09a79" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\scheduler\unstable_mock.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                    <Component Id="_unstable_post_task.js_2ff90daf_865e_490a_a127_6778840dd8b5" Guid="4d810f2f-85ff-4af6-b0c5-c084869b4afb" Win64="no">
+                      <File Name="unstable_post_task.js" Id="_unstable_post_task.js_2ff90daf_865e_490a_a127_6778840dd8b5" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\scheduler\unstable_post_task.js" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                  </Directory>
+                  <Component Id="_.package_lock.json_4411512c_ea86_4440_8809_39d830f88c7e" Guid="3cc19744-428e-449e-b234-59d1dd7c0045" Win64="no">
+                    <File Name=".package-lock.json" Id="_.package_lock.json_4411512c_ea86_4440_8809_39d830f88c7e" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\node_modules\.package-lock.json" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                  </Component>
+                </Directory>
+
+                <Directory Id="_resources_app_packaged_backend_c20cd4d4_0c4f_4c83_a58e_8e967bce54db" Name="packaged-backend">
+                  <Component Id="_SondaClickBackend.exe_9ed750fb_b06b_4455_a74a_054c9f840290" Guid="cac862d1-c7ee-45cb-a7f1-4cb9fbfe9ac6" Win64="no">
+                    <File Name="SondaClickBackend.exe" Id="_SondaClickBackend.exe_9ed750fb_b06b_4455_a74a_054c9f840290" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\packaged-backend\SondaClickBackend.exe" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                  </Component>
+                </Directory>
+                <Directory Id="_resources_app_packaged_resources_247f6606_7d05_495c_a930_b9622278aaf4" Name="packaged-resources">
+                  <Component Id="_.env_2517ffd5_af44_4f46_82ae_61f7c385181e" Guid="b5a1bf0d-b3f7-4da2-814a-12db51e14bc9" Win64="no">
+                    <File Name=".env" Id="_.env_2517ffd5_af44_4f46_82ae_61f7c385181e" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\packaged-resources\.env" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                  </Component>
+                </Directory>
+                <Directory Id="_resources_app_public_50d5ba31_c74b_4f72_a0b4_5da533e8688f" Name="public">
+                  <Component Id="_electron_vite.animate.svg_f21dba08_9e38_4214_b5bf_7a48a73d1774" Guid="7cab7951-a79b-4040-b751-ed8fc731b559" Win64="no">
+                    <File Name="electron-vite.animate.svg" Id="_electron_vite.animate.svg_f21dba08_9e38_4214_b5bf_7a48a73d1774" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\public\electron-vite.animate.svg" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                  </Component>
+                  <Component Id="_electron_vite.svg_91c203dc_035c_487b_8ae8_7d48b6ac27d5" Guid="3faa69a1-8757-4d3c-91f9-32f63769f1ac" Win64="no">
+                    <File Name="electron-vite.svg" Id="_electron_vite.svg_91c203dc_035c_487b_8ae8_7d48b6ac27d5" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\public\electron-vite.svg" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                  </Component>
+                  <Component Id="_resources_app_public_icon.ico_52a524c4_e2b2_4ea3_bd9a_40f6f62c449d" Guid="522a52cf-1086-461c-90e1-4db0bc4bc11d" Win64="no">
+                    <File Name="icon.ico" Id="_resources_app_public_icon.ico_52a524c4_e2b2_4ea3_bd9a_40f6f62c449d" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\public\icon.ico" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                  </Component>
+                  <Component Id="_resources_app_public_vite.svg_7dee73db_0055_4aec_8f05_1b6a59c68fff" Guid="a53b92a2-46a2-442d-8f2e-bad9a155c41e" Win64="no">
+                    <File Name="vite.svg" Id="_resources_app_public_vite.svg_7dee73db_0055_4aec_8f05_1b6a59c68fff" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\public\vite.svg" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                  </Component>
+                </Directory>
+                <Directory Id="_resources_app_src_8c50c382_021a_4b00_a8e3_745694eb8561" Name="src">
+                  <Directory Id="_resources_app_src_assets_ad0389f0_f883_4d05_9cd7_6b68637cbeb4" Name="assets">
+                    <Component Id="_resources_app_src_assets_react.svg_724fdcb4_2e85_4741_878a_3ab1da1baadc" Guid="bf9de09a-0fcc-49b6-b3ac-d455f1f845ba" Win64="no">
+                      <File Name="react.svg" Id="_resources_app_src_assets_react.svg_724fdcb4_2e85_4741_878a_3ab1da1baadc" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\src\assets\react.svg" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                  </Directory>
+                  <Directory Id="_resources_app_src_hooks_4ac13b52_a9df_4c40_8f5c_a4cb9b2e4100" Name="hooks">
+                    <Component Id="_useDomainCheck.ts_7e4d4296_13d4_4b9e_9f86_3b4d0f692d03" Guid="9e93da23-b2f7-4edd-92ee-0585b9a4c369" Win64="no">
+                      <File Name="useDomainCheck.ts" Id="_useDomainCheck.ts_7e4d4296_13d4_4b9e_9f86_3b4d0f692d03" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\src\hooks\useDomainCheck.ts" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                    </Component>
+                  </Directory>                  <Component Id="_resources_app_src_App.tsx_d0d25d67_ea62_4bd2_9261_5b74a8fa39fe" Guid="aed995bf-8a10-4d58-a212-e17f8c2ccc3f" Win64="no">
+                    <File Name="App.tsx" Id="_resources_app_src_App.tsx_d0d25d67_ea62_4bd2_9261_5b74a8fa39fe" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\src\App.tsx" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                  </Component>
+                  <Component Id="_resources_app_src_index.css_7f3d059d_c1a6_4e78_9511_22a0bed7b18c" Guid="465de6d3-db35-4bd2-b52a-f868399b2597" Win64="no">
+                    <File Name="index.css" Id="_resources_app_src_index.css_7f3d059d_c1a6_4e78_9511_22a0bed7b18c" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\src\index.css" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                  </Component>
+                  <Component Id="_resources_app_src_main.tsx_e8fc6d12_d6a8_49f6_8139_67f35d7145f1" Guid="ff3f3f7c-9783-4861-af51-d1094e24e1c2" Win64="no">
+                    <File Name="main.tsx" Id="_resources_app_src_main.tsx_e8fc6d12_d6a8_49f6_8139_67f35d7145f1" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\src\main.tsx" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                  </Component>
+                  <Component Id="_resources_app_src_vite_env.d.ts_aa645066_53ad_4850_aeda_21da1cb8d95d" Guid="12cdc987-d5af-41dd-acd2-39f00d832916" Win64="no">
+                    <File Name="vite-env.d.ts" Id="_resources_app_src_vite_env.d.ts_aa645066_53ad_4850_aeda_21da1cb8d95d" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\src\vite-env.d.ts" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                  </Component>
+                </Directory>
+                <Component Id="_resources_app_.eslintrc.cjs_c2a6c93b_39e3_4eb8_bd32_a21a67ac914e" Guid="cde6fedf-77c7-4623-a240-de49e0eeb943" Win64="no">
+                  <File Name=".eslintrc.cjs" Id="_resources_app_.eslintrc.cjs_c2a6c93b_39e3_4eb8_bd32_a21a67ac914e" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\.eslintrc.cjs" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                </Component>
+                <Component Id="_resources_app_.gitignore_2eded361_c817_431f_b6be_501159aa542c" Guid="4f9cfcc8-14dd-4ade-ba44-b459c47074fe" Win64="no">
+                  <File Name=".gitignore" Id="_resources_app_.gitignore_2eded361_c817_431f_b6be_501159aa542c" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\.gitignore" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                </Component>
+                <Component Id="_resources_app_README.md_e41f0d96_2e25_465e_bccc_aea572e052bb" Guid="cc355902-8280-4cda-87d6-c60d722fcffa" Win64="no">
+                  <File Name="README.md" Id="_resources_app_README.md_e41f0d96_2e25_465e_bccc_aea572e052bb" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\README.md" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                </Component>
+                <Component Id="_electron_builder.json_139c8a34_3350_4bd6_8452_694558262619" Guid="e8e7853b-12a1-4031-b33a-e63b81de06ca" Win64="no">
+                  <File Name="electron-builder.json" Id="_electron_builder.json_139c8a34_3350_4bd6_8452_694558262619" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\electron-builder.json" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                </Component>
+                <Component Id="_resources_app_index.html_2bc6b3c4_3140_472e_9609_c91a476d54eb" Guid="2fe9db13-2bf1-417b-b64e-877d4f1383fc" Win64="no">
+                  <File Name="index.html" Id="_resources_app_index.html_2bc6b3c4_3140_472e_9609_c91a476d54eb" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\index.html" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                </Component>
+                <Component Id="_resources_app_package.json_073f6a5c_7c13_43fb_a587_b9a99c25cfa2" Guid="886544af-b920-472f-81e8-5b200ac65303" Win64="no">
+                  <File Name="package.json" Id="_resources_app_package.json_073f6a5c_7c13_43fb_a587_b9a99c25cfa2" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\package.json" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                </Component>
+                <Component Id="_resources_app_run_admin.bat_b6666cab_1210_44a6_942e_58fc5e3a8a04" Guid="fa368f9e-4ae4-4e59-ba06-e9505f224821" Win64="no">
+                  <File Name="run-admin.bat" Id="_resources_app_run_admin.bat_b6666cab_1210_44a6_942e_58fc5e3a8a04" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\run-admin.bat" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                </Component>
+                <Component Id="_tempCodeRunnerFile.json_c8f7a8f7_475f_44e5_9328_830f4e9147d8" Guid="27e8bf5e-2b42-4158-b51d-d23be00100a4" Win64="no">
+                  <File Name="tempCodeRunnerFile.json" Id="_tempCodeRunnerFile.json_c8f7a8f7_475f_44e5_9328_830f4e9147d8" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\tempCodeRunnerFile.json" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                </Component>
+                <Component Id="_tsconfig.electron.json_fa51cd33_f457_4b06_96f9_c296bc204709" Guid="3c28f9d7-80f1-4483-8fec-447fac42c38e" Win64="no">
+                  <File Name="tsconfig.electron.json" Id="_tsconfig.electron.json_fa51cd33_f457_4b06_96f9_c296bc204709" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\tsconfig.electron.json" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                </Component>
+                <Component Id="_resources_app_tsconfig.json_1d946eb9_a9b6_4922_8396_c5f302fd9596" Guid="87b8ce0b-14a5-42ae-acb5-7bf5648bcf36" Win64="no">
+                  <File Name="tsconfig.json" Id="_resources_app_tsconfig.json_1d946eb9_a9b6_4922_8396_c5f302fd9596" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\tsconfig.json" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                </Component>
+                <Component Id="_resources_app_tsconfig.node.json_c5c8f95b_6d56_4d26_b4be_b56c68ae8cc4" Guid="b784c369-22e0-46d3-96ce-7dc66e1ed010" Win64="no">
+                  <File Name="tsconfig.node.json" Id="_resources_app_tsconfig.node.json_c5c8f95b_6d56_4d26_b4be_b56c68ae8cc4" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\tsconfig.node.json" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                </Component>
+                <Component Id="_resources_app_vite.config.ts_93262ce7_91af_448c_b1f8_53b07862fa81" Guid="7f59b8d4-fd05-44d9-b866-a750a2832a50" Win64="no">
+                  <File Name="vite.config.ts" Id="_resources_app_vite.config.ts_93262ce7_91af_448c_b1f8_53b07862fa81" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources\app\vite.config.ts" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+                </Component>
+              </Directory>
+
+            </Directory>
+            <Component Id="_LICENSE_09ab4f0b_0f9e_406f_bb6b_929927e5a83e" Guid="e9423c33-8941-4611-aa27-7dd8411e2235" Win64="no">
+              <File Name="LICENSE" Id="_LICENSE_09ab4f0b_0f9e_406f_bb6b_929927e5a83e" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\LICENSE" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+            </Component>
+            <Component Id="_LICENSES.chromium.html_91f533c9_80f0_49e7_ae0c_70faf551df52" Guid="720b7182-dc31-447d-9f93-fc6394a948f6" Win64="no">
+              <File Name="LICENSES.chromium.html" Id="_LICENSES.chromium.html_91f533c9_80f0_49e7_ae0c_70faf551df52" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\LICENSES.chromium.html" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+            </Component>
+            <Component Id="_SondaClickMX.exe_c8933fce_2b86_489c_af3c_2c812147ad6a" Guid="b78932fd-ba44-4bc8-a54f-6fee511cd0d1" Win64="no">
+              <File Name="SondaClickMX.exe" Id="_SondaClickMX.exe_c8933fce_2b86_489c_af3c_2c812147ad6a" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\SondaClickMX.exe" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+            </Component>
+            <Component Id="_chrome_100_percent.pak_026872c0_f4f4_4342_b652_74c4c8a94440" Guid="4b8be119-f73e-4e74-9937-794b5c3b49dd" Win64="no">
+              <File Name="chrome_100_percent.pak" Id="_chrome_100_percent.pak_026872c0_f4f4_4342_b652_74c4c8a94440" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\chrome_100_percent.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+            </Component>
+            <Component Id="_chrome_200_percent.pak_00ee77dd_fabf_457d_b322_4795a2904c0d" Guid="ba08338a-53a9-472f-9dbc-9c195b918c1c" Win64="no">
+              <File Name="chrome_200_percent.pak" Id="_chrome_200_percent.pak_00ee77dd_fabf_457d_b322_4795a2904c0d" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\chrome_200_percent.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+            </Component>
+            <Component Id="_d3dcompiler_47.dll_2a2c6822_e858_4bff_9fdb_7fe6ce3e2ae9" Guid="12a1f9f9-9143-4ffe-9358-1cf8abc16494" Win64="no">
+              <File Name="d3dcompiler_47.dll" Id="_d3dcompiler_47.dll_2a2c6822_e858_4bff_9fdb_7fe6ce3e2ae9" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\d3dcompiler_47.dll" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+            </Component>
+            <Component Id="_ffmpeg.dll_dae96eaf_396c_4964_aa50_087241c3c840" Guid="0be25629-745a-43ce-ac67-9e7edb49e453" Win64="no">
+              <File Name="ffmpeg.dll" Id="_ffmpeg.dll_dae96eaf_396c_4964_aa50_087241c3c840" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\ffmpeg.dll" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+            </Component>
+            <Component Id="_icudtl.dat_82c7f9ba_3b60_43d9_b805_048716569bf0" Guid="1c4310fe-4433-4c0c-a467-33131fa5971e" Win64="no">
+              <File Name="icudtl.dat" Id="_icudtl.dat_82c7f9ba_3b60_43d9_b805_048716569bf0" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\icudtl.dat" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+            </Component>
+            <Component Id="_libEGL.dll_a787f648_c894_4e7a_9bdc_cfcec9ec3b16" Guid="83002027-c43e-4472-affa-9fe2cfcd7ee5" Win64="no">
+              <File Name="libEGL.dll" Id="_libEGL.dll_a787f648_c894_4e7a_9bdc_cfcec9ec3b16" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\libEGL.dll" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+            </Component>
+            <Component Id="_libGLESv2.dll_3ed452f4_b8e0_4618_ba34_f8a5ab671b30" Guid="99c46da0-6bba-48fa-bc82-ff02d499706c" Win64="no">
+              <File Name="libGLESv2.dll" Id="_libGLESv2.dll_3ed452f4_b8e0_4618_ba34_f8a5ab671b30" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\libGLESv2.dll" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+            </Component>
+            <Component Id="_resources.pak_139c15c4_02ca_4de7_b2ad_fdf16cb02a65" Guid="e536af0c-60be-4f9b-b7f3-105d62376672" Win64="no">
+              <File Name="resources.pak" Id="_resources.pak_139c15c4_02ca_4de7_b2ad_fdf16cb02a65" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\resources.pak" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+            </Component>
+            <Component Id="_snapshot_blob.bin_4abfc994_a9b8_4b3d_979d_da9f8f831ed4" Guid="6358a0aa-be73-462b-942d-f0cbc54c38fe" Win64="no">
+              <File Name="snapshot_blob.bin" Id="_snapshot_blob.bin_4abfc994_a9b8_4b3d_979d_da9f8f831ed4" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\snapshot_blob.bin" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+            </Component>
+            <Component Id="_v8_context_snapshot.bin_ea18551b_fd26_40d7_aa8b_c7c8ab755eab" Guid="4d63275b-37b5-4c91-8bff-11e6648faf54" Win64="no">
+              <File Name="v8_context_snapshot.bin" Id="_v8_context_snapshot.bin_ea18551b_fd26_40d7_aa8b_c7c8ab755eab" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\v8_context_snapshot.bin" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+            </Component>
+            <Component Id="_version_9ab3ccec_6bc8_46f2_ae1a_982468d4c4de" Guid="a37b66f4-4a2e-4fd3-9a9c-e91bfcdae735" Win64="no">
+              <File Name="version" Id="_version_9ab3ccec_6bc8_46f2_ae1a_982468d4c4de" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\version" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+            </Component>
+            <Component Id="_vk_swiftshader.dll_5866642e_da90_4def_b2e8_313622075571" Guid="0a140ad0-d7b4-4078-9e4d-a49d3c7261b7" Win64="no">
+              <File Name="vk_swiftshader.dll" Id="_vk_swiftshader.dll_5866642e_da90_4def_b2e8_313622075571" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\vk_swiftshader.dll" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+            </Component>
+            <Component Id="_vk_swiftshader_icd.json_a29de931_10f3_4057_ac11_62c4c107beef" Guid="2b69b2ef-5644-46fb-8f80-67ee5672685f" Win64="no">
+              <File Name="vk_swiftshader_icd.json" Id="_vk_swiftshader_icd.json_a29de931_10f3_4057_ac11_62c4c107beef" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\vk_swiftshader_icd.json" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+            </Component>
+            <Component Id="_vulkan_1.dll_2ce393ca_0628_4e0f_9675_cd25cdfc3a4d" Guid="fbc5c480-b60b-4bf4-8e3b-2c128062a9a0" Win64="no">
+              <File Name="vulkan-1.dll" Id="_vulkan_1.dll_2ce393ca_0628_4e0f_9675_cd25cdfc3a4d" Source="C:\Users\jaime\Documents\SondaClick\frontend\SondaClickMX-win32-x64\vulkan-1.dll" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+            </Component>
+          </Directory>
+          <Component Id="_SondaClickMX.exe_f873e3ab_c25c_45b9_a356_0fb63cd014d6" Guid="c9029b62-01e7-4052-a3af-6aa606eb3531" Win64="no">
+            <File Name="SondaClickMX.exe" Id="_SondaClickMX.exe_f873e3ab_c25c_45b9_a356_0fb63cd014d6" Source="C:\Users\jaime\AppData\Local\Temp\SondaClickMXhLL8nt\SondaClickMX.exe" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+          </Component>
+          <Component Id="_.installInfo.json_bbdbbf6b_ecbb_4c15_9f20_96988e63190d" Guid="fd67b1c5-7ef1-4520-870f-8e67af8197c5" Win64="no">
+            <File Name=".installInfo.json" Id="_.installInfo.json_bbdbbf6b_ecbb_4c15_9f20_96988e63190d" Source="C:\Users\jaime\AppData\Local\Temp\.installInfoY0PlYz\.installInfo.json" KeyPath="yes" Checksum="yes" ProcessorArchitecture="x86"/>
+
+          </Component>
+          <Component Id="RegistryInstallPath" Guid="f1b10c3f-e3df-462c-8ac8-eebee2fa8a82" Win64="no">
+            <RegistryKey Root="HKMU" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{DEBE5A69-322F-41EB-9631-8FFFC85A0D45}.msq" ForceCreateOnInstall="no" ForceDeleteOnUninstall="yes">
+              <RegistryValue Name="InstallPath" Type="string" Value="[APPLICATIONROOTDIRECTORY]" KeyPath="yes"/>
+            </RegistryKey>
+          </Component>
+          <Component Id="UninstallDisplayName" Guid="9ecf5ee1-c6ad-41cc-ab4a-55f43a9fa965" Win64="no">
+            <RegistryKey Root="HKMU" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{DEBE5A69-322F-41EB-9631-8FFFC85A0D45}.msq" ForceCreateOnInstall="no" ForceDeleteOnUninstall="yes">
+              <RegistryValue Name="DisplayName" Type="string" Value="[VisibleProductName]" KeyPath="yes"/>
+            </RegistryKey>
+          </Component>
+          <Component Id="UninstallPublisher" Guid="1b0fc9f9-d407-4a14-9a60-fc410e4e4bc9" Win64="no">
+            <RegistryKey Root="HKMU" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{DEBE5A69-322F-41EB-9631-8FFFC85A0D45}.msq" ForceCreateOnInstall="no" ForceDeleteOnUninstall="yes">
+              <RegistryValue Name="Publisher" Type="string" Value="SONDA" KeyPath="yes"/>
+            </RegistryKey>
+          </Component>
+          <Component Id="UninstallDisplayVersion" Guid="c4eb7154-65b3-4b27-932f-600e073a3852" Win64="no">
+            <RegistryKey Root="HKMU" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{DEBE5A69-322F-41EB-9631-8FFFC85A0D45}.msq" ForceCreateOnInstall="no" ForceDeleteOnUninstall="yes">
+              <RegistryValue Name="DisplayVersion" Type="string" Value="1.0.0" KeyPath="yes"/>
+            </RegistryKey>
+          </Component>
+          <Component Id="UninstallModifyString" Guid="b2dfeb83-ceab-4932-b678-0cce31efd441" Win64="no">
+            <RegistryKey Root="HKMU" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{DEBE5A69-322F-41EB-9631-8FFFC85A0D45}.msq" ForceCreateOnInstall="no" ForceDeleteOnUninstall="yes">
+              <RegistryValue Name="ModifyPath" Type="expandable" Value="MsiExec.exe /I {DEBE5A69-322F-41EB-9631-8FFFC85A0D45}" KeyPath="yes"/>
+            </RegistryKey>
+          </Component>
+          <Component Id="UninstallString" Guid="749cbde0-8a73-4c37-bfd3-f67d9416828c" Win64="no">
+            <RegistryKey Root="HKMU" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{DEBE5A69-322F-41EB-9631-8FFFC85A0D45}.msq" ForceCreateOnInstall="no" ForceDeleteOnUninstall="yes">
+              <RegistryValue Name="UninstallString" Type="expandable" Value="MsiExec.exe /X {DEBE5A69-322F-41EB-9631-8FFFC85A0D45}" KeyPath="yes"/>
+            </RegistryKey>
+          </Component>
+          <Component Id="UninstallDisplayIcon" Guid="99b480f9-6cda-4869-b534-d1bf166e55ba" Win64="no">
+            <RegistryKey Root="HKMU" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{DEBE5A69-322F-41EB-9631-8FFFC85A0D45}.msq" ForceCreateOnInstall="no" ForceDeleteOnUninstall="yes">
+              <RegistryValue Name="DisplayIcon" Type="expandable" Value="[APPLICATIONROOTDIRECTORY]SondaClickMX.exe" KeyPath="yes"/>
+            </RegistryKey>
+          </Component>
+        </Directory>
+      </Directory>
+
+      <!-- Desktop -->
+      <Directory Id="DesktopFolder" Name="Desktop" />
+
+      <!-- Start Menu -->
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="SondaClickMX"/>
+      </Directory>
+    </Directory>
+
+    <!-- Step 3: Add app to Start Menu -->
+    <DirectoryRef Id="ApplicationProgramsFolder">
+      <Component Id="ApplicationShortcut" Guid="ece72407-6a56-43f2-a815-e3f73c01fa01" Win64="no">
+        <Shortcut Id="ApplicationStartMenuShortcut"
+                  Name="SondaClickMX"
+                  Description="Aplicación SondaClickMX"
+                  Target="[APPLICATIONROOTDIRECTORY]SondaClickMX.exe"
+                  WorkingDirectory="APPLICATIONROOTDIRECTORY">
+          <ShortcutProperty Key="System.AppUserModel.ID" Value="com.squirrel.sondaclickmx.sondaclickmx"/>
+        </Shortcut>
+        <RemoveFolder Id="ApplicationProgramsFolder" On="uninstall"/>
+        <RegistryValue Root="HKCU"
+                       Key="Software\Microsoft\SondaClickMX"
+                       Name="installed"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes"/>
+      </Component>
+    </DirectoryRef>
+
+   <!-- Step 4: Add app desktop shortcut --> 
+    <DirectoryRef Id="DesktopFolder">
+      <Component Id="DesktopShortcut" Guid="857a0d25-3247-4127-970d-6fe2056c24df" >
+          <Shortcut Id="MyDesktopShortcut"
+                    Name="SondaClickMX"
+                    Description="Aplicación SondaClickMX"
+                    Target="[APPLICATIONROOTDIRECTORY]SondaClickMX.exe"
+                    WorkingDirectory="APPLICATIONROOTDIRECTORY"/>
+          <RegistryValue Root="HKCU"
+                    Key="Software\Microsoft\SondaClickMX"
+                    Name="installed"
+                    Type="integer"
+                    Value="1"
+                    KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+
+    <!-- Lets cleanup any files that are were not part of the initial install
+    via this MSI. Such as newer versions installed by the auto-updater. -->
+    <DirectoryRef Id="APPLICATIONROOTDIRECTORY">
+      <Component Id="PurgeOnUninstall" Guid="4cefd2d6-20e7-4af5-af80-f32b59908d1c" Win64="no">
+        <CreateFolder/>
+        <util:RemoveFolderEx On="uninstall" Property="INSTALLPATH" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="Complete" Title="SondaClickMX (1.0.0)" Description="The complete package." Display="expand" Level="1" ConfigurableDirectory="APPLICATIONROOTDIRECTORY">
+      <!-- Step 5: Tell WiX to install the files -->
+      <Feature Id="MainApplication" Title="Main Application" Level="1" Description="The main components to run the applications." >
+        <ComponentRef Id="_locales_af.pak_8f55e309_9919_4bdb_9f2d_44887f3c97cf" />
+        <ComponentRef Id="_locales_am.pak_60506b9b_bd0e_4bd3_9a95_d6353ce80dfe" />
+        <ComponentRef Id="_locales_ar.pak_8fc9a445_f84e_4504_853b_da6bf2e58c86" />
+        <ComponentRef Id="_locales_bg.pak_71941cbc_a548_4318_9d59_8f467233f3d0" />
+        <ComponentRef Id="_locales_bn.pak_f51703ba_6dfc_4701_ab04_36f4e42ead9b" />
+        <ComponentRef Id="_locales_ca.pak_ba703e4f_eeb1_4141_9566_7b0525307fc2" />
+        <ComponentRef Id="_locales_cs.pak_81e8afd8_85c5_4dfd_a891_00d3de3ed601" />
+        <ComponentRef Id="_locales_da.pak_33e4e802_a42f_425f_8dde_0fbe6be81d16" />
+        <ComponentRef Id="_locales_de.pak_bbbc049f_7e93_44fc_aa86_a0dafb9115ad" />
+        <ComponentRef Id="_locales_el.pak_daa4f8b1_5104_4278_86d0_b93cec39683e" />
+        <ComponentRef Id="_locales_en_GB.pak_de6f9624_c634_4f40_a2c9_b8c69a6eb0c4" />
+        <ComponentRef Id="_locales_en_US.pak_06b336ff_1ca7_4839_b2b2_6d26c91594a8" />
+        <ComponentRef Id="_locales_es_419.pak_2e557a7a_2877_44c8_b53d_e8561bfa85b9" />
+        <ComponentRef Id="_locales_es.pak_08d71186_415e_40f1_8040_9d3d0dc3ff96" />
+        <ComponentRef Id="_locales_et.pak_a4bd0107_7da4_4fc8_a01a_62448e6e44ab" />
+        <ComponentRef Id="_locales_fa.pak_0faa9c41_9c35_460c_b1eb_e87ecff9bb4e" />
+        <ComponentRef Id="_locales_fi.pak_2e726ca7_89d5_4793_96ed_ee2e911103a0" />
+        <ComponentRef Id="_locales_fil.pak_9879815c_14d6_4291_8dd3_32d19be5b4fe" />
+        <ComponentRef Id="_locales_fr.pak_a6c46923_5027_4c4c_aaef_8a730e8d9487" />
+        <ComponentRef Id="_locales_gu.pak_1cd01d09_fd76_4d8d_91a7_4159aa80d1d1" />
+        <ComponentRef Id="_locales_he.pak_e97e6d2f_0faf_42b9_8908_a070e866c64a" />
+        <ComponentRef Id="_locales_hi.pak_c35f622d_181c_4127_959d_789ff06e1150" />
+        <ComponentRef Id="_locales_hr.pak_7d5c5d6b_8e20_4a55_b203_ac661499c872" />
+        <ComponentRef Id="_locales_hu.pak_a4bde0bb_363e_4aae_b97b_992081650e28" />
+        <ComponentRef Id="_locales_id.pak_72cdb90e_3c3c_48cf_862e_f3f2e0243a95" />
+        <ComponentRef Id="_locales_it.pak_4e086bb6_d45e_4340_98b1_8824ef6baeae" />
+        <ComponentRef Id="_locales_ja.pak_7893dbca_ddbc_45ad_9221_d423ed1f7d33" />
+        <ComponentRef Id="_locales_kn.pak_6d7c8796_9ea9_42a5_b448_bb0b9ee985bd" />
+        <ComponentRef Id="_locales_ko.pak_580b8724_70ca_4769_89a5_dc753d25c25c" />
+        <ComponentRef Id="_locales_lt.pak_ec852121_02b0_4e8d_a021_6a3562bdca8b" />
+        <ComponentRef Id="_locales_lv.pak_f3521110_821b_4dd7_8513_c756a9d20056" />
+        <ComponentRef Id="_locales_ml.pak_2972cab4_4e1b_4a0d_b77b_6636035c54e2" />
+        <ComponentRef Id="_locales_mr.pak_8b277826_9f0c_49ff_98c1_dd652326a36d" />
+        <ComponentRef Id="_locales_ms.pak_8c66a39b_05a8_4dd6_960f_cb8974ccf342" />
+        <ComponentRef Id="_locales_nb.pak_602ed5f7_9ab2_4938_87be_8e0b87acf122" />
+        <ComponentRef Id="_locales_nl.pak_c5c39dd6_aeb6_480a_9087_1b6d6ffa2c87" />
+        <ComponentRef Id="_locales_pl.pak_7000c2f6_95db_4bc4_bc13_0c3ae8700454" />
+        <ComponentRef Id="_locales_pt_BR.pak_2becdb25_6972_4ee1_a07c_2e438633671c" />
+        <ComponentRef Id="_locales_pt_PT.pak_500ba1c1_22e4_4273_a964_6761d412112f" />
+        <ComponentRef Id="_locales_ro.pak_920afaf7_20bb_43f2_a21b_d16e18d8a4a7" />
+        <ComponentRef Id="_locales_ru.pak_2f8545b7_3480_440f_b7b4_5a34a015dd77" />
+        <ComponentRef Id="_locales_sk.pak_1f20d231_54a3_4c26_b3ec_1cf102eee230" />
+        <ComponentRef Id="_locales_sl.pak_d519e099_dc32_4790_a426_0d013306e186" />
+        <ComponentRef Id="_locales_sr.pak_a7614360_a947_4845_b7ed_a83e3f488ce2" />
+        <ComponentRef Id="_locales_sv.pak_d6a388cf_6cb4_4573_b55d_a97ddb15ac81" />
+        <ComponentRef Id="_locales_sw.pak_4da0cc7d_36c3_4b6a_819a_fccacadf0818" />
+        <ComponentRef Id="_locales_ta.pak_2aef8984_a3c0_477b_83b0_d0f76ebd9220" />
+        <ComponentRef Id="_locales_te.pak_a0134e28_8fbb_4768_9366_5c17fb1e1d51" />
+        <ComponentRef Id="_locales_th.pak_0c996870_81b4_4a9b_b591_6fd88cf071ee" />
+        <ComponentRef Id="_locales_tr.pak_ab0a421c_2227_4c69_9995_143c680fb7d5" />
+        <ComponentRef Id="_locales_uk.pak_61965c0f_acd5_403e_87cd_67a15184ed40" />
+        <ComponentRef Id="_locales_ur.pak_ff7936ea_5f68_40bc_9b79_1b5d5bb90aff" />
+        <ComponentRef Id="_locales_vi.pak_34f9c450_aed3_4a53_9f0d_de9bcc5c3b4d" />
+        <ComponentRef Id="_locales_zh_CN.pak_f50134c6_88bb_44bc_8a09_f73e908a7c29" />
+        <ComponentRef Id="_locales_zh_TW.pak_22854da1_1dbd_48c5_b8f0_69bbfb74251f" />
+        <ComponentRef Id="_Example.tsx_63c17087_69a8_40e4_a08b_15bfc78cd723" />
+        <ComponentRef Id="_PasswordChangeButton.tsx_e9dbc670_6940_4434_bb04_a281e5a57f4c" />
+        <ComponentRef Id="_PasswordChangeModal.tsx_6fa4dd49_9a8e_49f5_a89b_c801ddada331" />
+        <ComponentRef Id="_UsersDetails.tsx_a8edef5c_1707_4d85_8e07_579b1103ea36" />
+        <ComponentRef Id="_index_CwE5NK02.css_47eee113_ccce_450c_8e47_ce5c495f9124" />
+        <ComponentRef Id="_index_D3q1pPJe.js_a44364d1_12f5_4a89_88db_3c5f80053b38" />
+        <ComponentRef Id="_electron_vite.animate.svg_1d74b66d_1723_4c16_a5a9_5a4226e2eeb5" />
+        <ComponentRef Id="_electron_vite.svg_25f40731_b87a_481d_95c6_b79f2d0fadaa" />
+        <ComponentRef Id="_resources_app_dist_icon.ico_e8ea7c4e_1d8b_4d31_926e_69c9c997c465" />
+        <ComponentRef Id="_resources_app_dist_index.html_fa6c4985_30ed_44cd_805c_8ac09e11da39" />
+        <ComponentRef Id="_resources_app_dist_vite.svg_c04ecb26_d8cd_4c41_9beb_d304731c8020" />
+        <ComponentRef Id="_main.js_f82e89d3_f8fe_4962_80bd_0bb949863b5b" />
+        <ComponentRef Id="_preload.js_9694a4e3_67b5_407a_a421_d9cb565a6d86" />
+        <ComponentRef Id="_preload.mjs_2bcb6739_5a0c_464b_b44a_0952518a9ce6" />
+        <ComponentRef Id="_electron_env.d.ts_20f71ff1_56b4_407d_9d6c_dc561bef288e" />
+        <ComponentRef Id="_resources_app_electron_main.js_cc43e877_999c_44a9_83e7_4062c1c0d9ba" />
+        <ComponentRef Id="_resources_app_electron_main.ts_089f130e_e4da_49f1_bff8_6f0da6a264e5" />
+        <ComponentRef Id="_resources_app_electron_preload.ts_12a34591_a524_4ddd_887f_ef7cadbe5a1b" />
+        <ComponentRef Id="__metadata.json_4bef1c1d_066f_48cb_aa0a_fcead806b085" />
+        <ComponentRef Id="_chunk_I4MZPW7S.js_30046f30_3b69_43bd_beb5_185542a3dcaf" />
+        <ComponentRef Id="_chunk_I4MZPW7S.js.map_ed4ed854_cf1d_4d64_a554_427bbf8803cc" />
+        <ComponentRef Id="_chunk_XPR23Y44.js_705f6802_e4b4_434a_85dd_39e5191cb76b" />
+        <ComponentRef Id="_chunk_XPR23Y44.js.map_cf922207_a18d_43c2_a375_63977ae02492" />
+        <ComponentRef Id="_package.json_e0a5aa1f_8e81_4bbb_9289_79bd1737d760" />
+        <ComponentRef Id="_react_dom.js_189d39ac_bdee_4720_b9f2_a2d4a0fb2897" />
+        <ComponentRef Id="_react_dom.js.map_0eca5951_5d68_484e_8738_c50bc587ef83" />
+        <ComponentRef Id="_react_dom_client.js_d7b21368_4751_4df2_a0b6_fcf04d30308f" />
+        <ComponentRef Id="_react_dom_client.js.map_b58196cb_c5fc_4083_9687_a09c54435893" />
+        <ComponentRef Id="_react_toastify.js_5fec95d8_581a_40a5_824b_878cf0fbcf85" />
+        <ComponentRef Id="_react_toastify.js.map_f05fef90_79db_4782_9a77_1b9ccf76270c" />
+        <ComponentRef Id="_react.js_70b12ef0_6b93_46a8_a0f1_45f2c2de27b3" />
+        <ComponentRef Id="_react.js.map_974b97f1_eb95_48dd_af60_8786ee55e072" />
+        <ComponentRef Id="_react_jsx_dev_runtime.js_3b6597a4_5c8d_4099_b50e_10ba66042dfb" />
+        <ComponentRef Id="_react_jsx_dev_runtime.js.map_3ab9218e_39b9_485e_b2ce_0531d6d581c7" />
+        <ComponentRef Id="_react_jsx_runtime.js_b19d2406_2826_45c9_b6d8_1727a626cdea" />
+        <ComponentRef Id="_react_jsx_runtime.js.map_86541e32_94a8_4f1b_849b_af494b4d9942" />
+        <ComponentRef Id="_clsx.js_439128b4_3af4_4554_bf24_2d848513fccf" />
+        <ComponentRef Id="_clsx.min.js_0daaa27e_de8d_49f3_bff4_6f24bf09db68" />
+        <ComponentRef Id="_clsx.mjs_a6d3ee8a_c47b_42da_a3e2_9aa45700de6b" />
+        <ComponentRef Id="_lite.js_58507778_6788_437f_93a0_30e567c4f4dd" />
+        <ComponentRef Id="_lite.mjs_db154cb8_c34a_4314_b0e2_e7c40bc821ad" />
+        <ComponentRef Id="_clsx.d.mts_3acb3414_3948_4939_82c0_3fb4b5d5ce3c" />
+        <ComponentRef Id="_clsx.d.ts_981bf091_3f03_412f_82c8_0292226a59b6" />
+        <ComponentRef Id="_license_c3f484c9_3504_4aff_909e_c990a5541a1b" />
+        <ComponentRef Id="_package.json_73635649_7c2d_49dc_9d54_d211df928282" />
+        <ComponentRef Id="_readme.md_ee1114a8_3118_4af2_a0d1_04a7328da4c8" />
+        <ComponentRef Id="_cli_options.js_56c7c855_1311_479e_9006_714e401a90cc" />
+        <ComponentRef Id="_env_options.js_4f0d4f4d_9dcd_4337_9934_482f9ac19f2f" />
+        <ComponentRef Id="_main.d.ts_9feb5013_7170_40bc_96d6_ba9f3fdb7a01" />
+        <ComponentRef Id="_main.js_6d80a86f_4bbd_4ded_8eb8_aafa1dbcaf3c" />
+        <ComponentRef Id="_CHANGELOG.md_cecf071e_4152_4bfe_835a_dced2d15f123" />
+        <ComponentRef Id="_LICENSE_4b17e0a0_2bdf_4b27_921e_64b60764653b" />
+        <ComponentRef Id="_README_es.md_eb057bc4_e533_44c6_8553_5836412cfc9b" />
+        <ComponentRef Id="_README.md_887dee8d_921b_43c4_9205_16f3c942ac23" />
+        <ComponentRef Id="_config.d.ts_d37f6288_e0ee_4883_81e7_f147457dbcab" />
+        <ComponentRef Id="_config.js_0f0edffb_8cc2_4ed4_bb40_b6bd604659ff" />
+        <ComponentRef Id="_package.json_3fdf553f_bca6_4032_831f_8951c0b5367b" />
+        <ComponentRef Id="_CHANGELOG.md_b37ac328_f4e3_482c_9a0b_57c08c6c9caf" />
+        <ComponentRef Id="_LICENSE_beb7691b_1789_4dd0_b261_9e3ae083557d" />
+        <ComponentRef Id="_README.md_bdf815a6_2edb_4a82_9039_f0ba8449295f" />
+        <ComponentRef Id="_index.js_7fc3fdf4_7d12_4d47_97a4_510cec5b6632" />
+        <ComponentRef Id="_package.json_2522d8d2_7f47_4451_a41f_a4d883ed48fc" />
+        <ComponentRef Id="_LICENSE_d0341b85_777d_4c4a_9f71_2a1cd8b770c8" />
+        <ComponentRef Id="_README.md_79b2eed0_a3c5_47a9_a084_a4e073f7ed91" />
+        <ComponentRef Id="_cli.js_6e961518_9225_4c2a_9d33_5703b9bfe95b" />
+        <ComponentRef Id="_custom.js_782f0d04_77e1_42fd_9456_49de926a8af0" />
+        <ComponentRef Id="_index.js_0b4325d7_2722_4e96_bec8_73630595ca34" />
+        <ComponentRef Id="_loose_envify.js_32fb34bf_5927_4bf6_8b61_9abea0e91781" />
+        <ComponentRef Id="_package.json_347f7513_62b6_45cf_a6f9_2dfbe9ea924a" />
+        <ComponentRef Id="_replace.js_af31b804_a2e7_42ab_a2a5_7aff05007b14" />
+        <ComponentRef Id="_react_jsx_dev_runtime.development._da5e1b02_fc28_423c_b10e_330bae806c4b" />
+        <ComponentRef Id="_react_jsx_dev_runtime.production.m_1dfeec37_4afa_40be_9eed_01098b0eaa8d" />
+        <ComponentRef Id="_react_jsx_dev_runtime.profiling.mi_7d8ae520_6f2b_4693_9964_ce784c5a7f13" />
+        <ComponentRef Id="_react_jsx_runtime.development.js_779641a8_9b5e_434f_9e14_93564750ae59" />
+        <ComponentRef Id="_react_jsx_runtime.production.min.j_562427d4_61bd_42d6_a371_995bf9ada5d5" />
+        <ComponentRef Id="_react_jsx_runtime.profiling.min.js_d54523e6_5b29_4aef_9183_3cb23fa6a275" />
+        <ComponentRef Id="_react.development.js_84af01ee_544b_40a0_920d_749b10c1e7cd" />
+        <ComponentRef Id="_react.production.min.js_6742b423_ee0c_46ea_99bf_8f9bc6f3fba1" />
+        <ComponentRef Id="_react.shared_subset.development.js_77adb2b1_9996_42f4_a7d3_c091de88a8b5" />
+        <ComponentRef Id="_react.shared_subset.production.min_55508c7a_8ebb_4bcf_8271_1a06f717c9e3" />
+        <ComponentRef Id="_react.development.js_04d9c9dd_9689_4185_90e4_4ca2de98dc74" />
+        <ComponentRef Id="_react.production.min.js_f845cb9f_9780_4ead_8231_583d1f5085fa" />
+        <ComponentRef Id="_react.profiling.min.js_aef142ac_1c5c_48fd_a300_3fddd823a7aa" />
+        <ComponentRef Id="_LICENSE_47371f13_2518_49d8_ba26_02ba3bd3f61f" />
+        <ComponentRef Id="_README.md_66ad41e9_3be7_44cf_ac00_563baff74965" />
+        <ComponentRef Id="_index.js_951d81f8_6548_40d3_9137_c15e5cdc919a" />
+        <ComponentRef Id="_jsx_dev_runtime.js_68ba37a2_8b2b_47f9_b253_28c69d68f912" />
+        <ComponentRef Id="_jsx_runtime.js_9fdb255b_f02f_4e22_bb08_c626c3a0294a" />
+        <ComponentRef Id="_package.json_0fed3d0c_4f29_4f71_ad40_0b493cc0c819" />
+        <ComponentRef Id="_react.shared_subset.js_fbbfec8b_2d46_477d_9a91_5cb818df89f9" />
+        <ComponentRef Id="_react_dom_server_legacy.browser.de_7d48e110_bc5e_44fe_bc96_c096920f140d" />
+        <ComponentRef Id="_react_dom_server_legacy.browser.pr_f67c4478_f6b5_4506_ae20_f7de009b5d75" />
+        <ComponentRef Id="_react_dom_server_legacy.node.devel_4eabc18f_ddac_4415_b825_b11d724e4b16" />
+        <ComponentRef Id="_react_dom_server_legacy.node.produ_ce37bc0c_785f_41d8_873c_cae00cb9d60f" />
+        <ComponentRef Id="_react_dom_server.browser.developme_fce5ec2b_564c_4c47_95ee_c5fa5e68a88c" />
+        <ComponentRef Id="_react_dom_server.browser.productio_a17ffc84_76ed_4a10_8879_09ce4b7a047d" />
+        <ComponentRef Id="_react_dom_server.node.development._88d19f86_7c92_4166_8dd7_cb62ca40faf3" />
+        <ComponentRef Id="_react_dom_server.node.production.m_101c6de3_757d_4043_9b7c_3f72625b74f8" />
+        <ComponentRef Id="_react_dom_test_utils.development.j_edc2e4e1_a68a_47a2_b755_89cea2a8a787" />
+        <ComponentRef Id="_react_dom_test_utils.production.mi_4eec4f35_184f_4c7d_bf54_acda972d4381" />
+        <ComponentRef Id="_react_dom.development.js_ea184bda_b734_46a6_8028_b2caf41d9e65" />
+        <ComponentRef Id="_react_dom.production.min.js_b1a0ba19_8734_43f1_8129_3198d3403893" />
+        <ComponentRef Id="_react_dom.profiling.min.js_0aa55431_c9a9_41b7_acc6_d57c1da29d9d" />
+        <ComponentRef Id="_react_dom_server_legacy.browser.de_a6d794a5_91ca_46eb_921b_0083c058a302" />
+        <ComponentRef Id="_react_dom_server_legacy.browser.pr_3b437702_dec9_4e09_8447_d210626f47da" />
+        <ComponentRef Id="_react_dom_server.browser.developme_b1eb161b_becb_4bd0_a975_69f664c68439" />
+        <ComponentRef Id="_react_dom_server.browser.productio_c3f98b33_620a_4adc_9f9f_e71b14d5575d" />
+        <ComponentRef Id="_react_dom_test_utils.development.j_2a1c3386_5ec6_4ede_baf7_5c72464550a8" />
+        <ComponentRef Id="_react_dom_test_utils.production.mi_731ea583_d1c5_40f5_a5eb_56a1d284eaf4" />
+        <ComponentRef Id="_react_dom.development.js_9876c841_2025_4d0e_ac45_8996c89bac9c" />
+        <ComponentRef Id="_react_dom.production.min.js_d37a0481_c32d_4ffd_a741_b40e3ba162be" />
+        <ComponentRef Id="_react_dom.profiling.min.js_10ab2237_8855_4ab5_9b41_50164aa779cc" />
+        <ComponentRef Id="_LICENSE_82f6c38d_6bcc_4ae7_a570_05e47561b96b" />
+        <ComponentRef Id="_README.md_b4cccc25_6518_4cca_ae48_4ae4747a0198" />
+        <ComponentRef Id="_client.js_10fc6f2d_6ce9_48b7_9554_7c7d77007175" />
+        <ComponentRef Id="_index.js_d16a8d2d_e790_436b_9994_c094fd5aae7f" />
+        <ComponentRef Id="_package.json_580b3f56_da8c_4852_91ee_eb7265d08aac" />
+        <ComponentRef Id="_profiling.js_5a75310c_cef5_4cfe_b039_88d12d1cdd27" />
+        <ComponentRef Id="_server.browser.js_682dc176_2056_47ce_b329_f06f8183b6c4" />
+        <ComponentRef Id="_server.js_109844c7_91bf_4306_aee6_63b999a424a8" />
+        <ComponentRef Id="_server.node.js_d7241ed1_d055_4baf_b347_fe1de9a29c39" />
+        <ComponentRef Id="_test_utils.js_f161ff2b_e6cf_4262_853d_085f554aee88" />
+        <ComponentRef Id="_index.d.mts_c8fbdeed_6c5f_4a0e_915a_18484bf9bbc9" />
+        <ComponentRef Id="_index.d.ts_50d82dba_af6c_4985_867c_720d05d9e563" />
+        <ComponentRef Id="_index.js_e4d7e72b_b1df_4fcd_96e9_b6745da0f157" />
+        <ComponentRef Id="_index.js.map_f1384aea_4a40_4491_b166_10554f700c29" />
+        <ComponentRef Id="_index.mjs_f165b4dc_23d2_40e1_98dd_c82ab7198091" />
+        <ComponentRef Id="_index.mjs.map_22613b9d_dcef_4caf_a838_1a2355084b84" />
+        <ComponentRef Id="_ReactToastify.css_33d4ae23_27f4_4265_b324_d61e85a9a077" />
+        <ComponentRef Id="_index.d.mts_86e995a4_7e9e_45cf_995e_d90a6e9d6748" />
+        <ComponentRef Id="_index.d.ts_1365944d_7e71_438e_af79_477365262353" />
+        <ComponentRef Id="_index.js_38e202a5_57f4_47c6_afc4_48f0c844b7ae" />
+        <ComponentRef Id="_index.js.map_cd691a54_9035_4152_b784_816d6903a23f" />
+        <ComponentRef Id="_index.mjs_02bce6e7_582b_4c11_bfb8_d8c24ad256a9" />
+        <ComponentRef Id="_index.mjs.map_fec38450_1d40_4742_ac4c_fe105c78738c" />
+        <ComponentRef Id="_unstyled.d.mts_d406b914_d8d7_46f8_873f_38972ef2b715" />
+        <ComponentRef Id="_unstyled.d.ts_2115a5d0_816a_48af_aef9_afe724ca47c9" />
+        <ComponentRef Id="_unstyled.js_16bdaed2_9aea_4ba4_b6fb_f2d4781d8b63" />
+        <ComponentRef Id="_unstyled.js.map_e008d83c_fc6e_4c88_9444_13ddb5e74fb1" />
+        <ComponentRef Id="_unstyled.mjs_8d23a293_97a2_4431_a6a2_35fdfe7a1191" />
+        <ComponentRef Id="_unstyled.mjs.map_278d9dd0_e459_4a05_b7ea_c77d535bca89" />
+        <ComponentRef Id="_LICENSE_ba49bff1_934f_4a94_b3b0_e36fa09a6ba9" />
+        <ComponentRef Id="_README.md_51e73171_7035_4290_8ece_a17c7ae3ab3e" />
+        <ComponentRef Id="_package.json_b197f93c_136a_48d2_8334_38de9fd55a35" />
+        <ComponentRef Id="_scheduler_unstable_mock.developmen_b4a4e067_a0c1_4386_8b3c_c9abba635490" />
+        <ComponentRef Id="_scheduler_unstable_mock.production_c92204df_6c7f_4658_9212_dea1053d936d" />
+        <ComponentRef Id="_scheduler_unstable_post_task.devel_7cb59e42_e89d_4ce0_8bbb_0f9ff8303e0d" />
+        <ComponentRef Id="_scheduler_unstable_post_task.produ_160791ee_a265_4c89_a222_143bca91ebf4" />
+        <ComponentRef Id="_scheduler.development.js_79e09397_874b_4a55_8445_938407b1b677" />
+        <ComponentRef Id="_scheduler.production.min.js_c2d01e43_8e4b_42f5_aa49_d39ab28678cc" />
+        <ComponentRef Id="_scheduler_unstable_mock.developmen_776d540a_8181_4edf_aebf_223fb33e5512" />
+        <ComponentRef Id="_scheduler_unstable_mock.production_3b293058_761a_43f8_9437_abeffd25de40" />
+        <ComponentRef Id="_scheduler.development.js_b70165bb_9216_4575_a41f_70d6e5297db6" />
+        <ComponentRef Id="_scheduler.production.min.js_97c331e2_41cc_43e8_8dcc_bd447ab3018d" />
+        <ComponentRef Id="_scheduler.profiling.min.js_158e4b74_9725_49fa_8885_6d27b472c7d7" />
+        <ComponentRef Id="_LICENSE_42a828e9_0594_47ed_9948_4fbeeddaa7d6" />
+        <ComponentRef Id="_README.md_84b6510e_8e9f_4cbc_9f18_4b862c5a03a3" />
+        <ComponentRef Id="_index.js_49c29cbb_fe83_4cbc_9bc1_aa84a411b991" />
+        <ComponentRef Id="_package.json_d5b54557_4161_464d_9935_776d03752d67" />
+        <ComponentRef Id="_unstable_mock.js_e3c6de75_7cb2_453e_a6c6_6cc46ec09a79" />
+        <ComponentRef Id="_unstable_post_task.js_2ff90daf_865e_490a_a127_6778840dd8b5" />
+        <ComponentRef Id="_.package_lock.json_4411512c_ea86_4440_8809_39d830f88c7e" />
+        <ComponentRef Id="_SondaClickBackend.exe_9ed750fb_b06b_4455_a74a_054c9f840290" />
+        <ComponentRef Id="_.env_2517ffd5_af44_4f46_82ae_61f7c385181e" />
+        <ComponentRef Id="_electron_vite.animate.svg_f21dba08_9e38_4214_b5bf_7a48a73d1774" />
+        <ComponentRef Id="_electron_vite.svg_91c203dc_035c_487b_8ae8_7d48b6ac27d5" />
+        <ComponentRef Id="_resources_app_public_icon.ico_52a524c4_e2b2_4ea3_bd9a_40f6f62c449d" />
+        <ComponentRef Id="_resources_app_public_vite.svg_7dee73db_0055_4aec_8f05_1b6a59c68fff" />
+        <ComponentRef Id="_resources_app_src_assets_react.svg_724fdcb4_2e85_4741_878a_3ab1da1baadc" />
+        <ComponentRef Id="_useDomainCheck.ts_7e4d4296_13d4_4b9e_9f86_3b4d0f692d03" />
+        <ComponentRef Id="_resources_app_src_App.tsx_d0d25d67_ea62_4bd2_9261_5b74a8fa39fe" />
+        <ComponentRef Id="_resources_app_src_index.css_7f3d059d_c1a6_4e78_9511_22a0bed7b18c" />
+        <ComponentRef Id="_resources_app_src_main.tsx_e8fc6d12_d6a8_49f6_8139_67f35d7145f1" />
+        <ComponentRef Id="_resources_app_src_vite_env.d.ts_aa645066_53ad_4850_aeda_21da1cb8d95d" />
+        <ComponentRef Id="_resources_app_.eslintrc.cjs_c2a6c93b_39e3_4eb8_bd32_a21a67ac914e" />
+        <ComponentRef Id="_resources_app_.gitignore_2eded361_c817_431f_b6be_501159aa542c" />
+        <ComponentRef Id="_resources_app_README.md_e41f0d96_2e25_465e_bccc_aea572e052bb" />
+        <ComponentRef Id="_electron_builder.json_139c8a34_3350_4bd6_8452_694558262619" />
+        <ComponentRef Id="_resources_app_index.html_2bc6b3c4_3140_472e_9609_c91a476d54eb" />
+        <ComponentRef Id="_resources_app_package.json_073f6a5c_7c13_43fb_a587_b9a99c25cfa2" />
+        <ComponentRef Id="_resources_app_run_admin.bat_b6666cab_1210_44a6_942e_58fc5e3a8a04" />
+        <ComponentRef Id="_tempCodeRunnerFile.json_c8f7a8f7_475f_44e5_9328_830f4e9147d8" />
+        <ComponentRef Id="_tsconfig.electron.json_fa51cd33_f457_4b06_96f9_c296bc204709" />
+        <ComponentRef Id="_resources_app_tsconfig.json_1d946eb9_a9b6_4922_8396_c5f302fd9596" />
+        <ComponentRef Id="_resources_app_tsconfig.node.json_c5c8f95b_6d56_4d26_b4be_b56c68ae8cc4" />
+        <ComponentRef Id="_resources_app_vite.config.ts_93262ce7_91af_448c_b1f8_53b07862fa81" />
+        <ComponentRef Id="_LICENSE_09ab4f0b_0f9e_406f_bb6b_929927e5a83e" />
+        <ComponentRef Id="_LICENSES.chromium.html_91f533c9_80f0_49e7_ae0c_70faf551df52" />
+        <ComponentRef Id="_SondaClickMX.exe_c8933fce_2b86_489c_af3c_2c812147ad6a" />
+        <ComponentRef Id="_chrome_100_percent.pak_026872c0_f4f4_4342_b652_74c4c8a94440" />
+        <ComponentRef Id="_chrome_200_percent.pak_00ee77dd_fabf_457d_b322_4795a2904c0d" />
+        <ComponentRef Id="_d3dcompiler_47.dll_2a2c6822_e858_4bff_9fdb_7fe6ce3e2ae9" />
+        <ComponentRef Id="_ffmpeg.dll_dae96eaf_396c_4964_aa50_087241c3c840" />
+        <ComponentRef Id="_icudtl.dat_82c7f9ba_3b60_43d9_b805_048716569bf0" />
+        <ComponentRef Id="_libEGL.dll_a787f648_c894_4e7a_9bdc_cfcec9ec3b16" />
+        <ComponentRef Id="_libGLESv2.dll_3ed452f4_b8e0_4618_ba34_f8a5ab671b30" />
+        <ComponentRef Id="_resources.pak_139c15c4_02ca_4de7_b2ad_fdf16cb02a65" />
+        <ComponentRef Id="_snapshot_blob.bin_4abfc994_a9b8_4b3d_979d_da9f8f831ed4" />
+        <ComponentRef Id="_v8_context_snapshot.bin_ea18551b_fd26_40d7_aa8b_c7c8ab755eab" />
+        <ComponentRef Id="_version_9ab3ccec_6bc8_46f2_ae1a_982468d4c4de" />
+        <ComponentRef Id="_vk_swiftshader.dll_5866642e_da90_4def_b2e8_313622075571" />
+        <ComponentRef Id="_vk_swiftshader_icd.json_a29de931_10f3_4057_ac11_62c4c107beef" />
+        <ComponentRef Id="_vulkan_1.dll_2ce393ca_0628_4e0f_9675_cd25cdfc3a4d" />
+        <ComponentRef Id="_SondaClickMX.exe_f873e3ab_c25c_45b9_a356_0fb63cd014d6" />
+        <ComponentRef Id="_.installInfo.json_bbdbbf6b_ecbb_4c15_9f20_96988e63190d" />
+        <ComponentRef Id="RegistryInstallPath" />
+        <ComponentRef Id="UninstallDisplayName" />
+        <ComponentRef Id="UninstallPublisher" />
+        <ComponentRef Id="UninstallDisplayVersion" />
+        <ComponentRef Id="UninstallModifyString" />
+        <ComponentRef Id="UninstallString" />
+        <ComponentRef Id="UninstallDisplayIcon" />
+        <ComponentRef Id="ApplicationShortcut" />
+        <ComponentRef Id="DesktopShortcut" />
+        <ComponentRef Id="PurgeOnUninstall" />
+      </Feature> 
+    </Feature> 
+  
+  <Icon Id="IconFile" SourceFile="C:\\Users\\jaime\\Documents\\SondaClick\\frontend\\public\\icon.ico"/>
+  </Product>
+</Wix>
