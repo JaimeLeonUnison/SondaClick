@@ -1,9 +1,9 @@
-import { app, BrowserWindow, Notification, ipcMain, dialog} from 'electron';
+import { app, BrowserWindow, Notification, ipcMain, dialog, Tray, Menu, nativeImage } from 'electron'; // Añadido Tray, Menu, nativeImage
 import * as path from 'path';
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, ChildProcess, exec } from 'child_process';
 import * as dotenv from 'dotenv';
 
-const APP_ROOT = path.join(__dirname, '..'); // frontend/
+const APP_ROOT = path.join(__dirname, '..');
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
 const RENDERER_DIST = path.join(APP_ROOT, 'dist');
 
@@ -12,6 +12,9 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(APP_ROOT, 'public') : 
 let win: BrowserWindow | null = null;
 let backendProcess: ChildProcess | null = null;
 const backendPort = 5000;
+let tray: Tray | null = null; // Variable para la instancia de Tray
+// @ts-expect-error ignoring
+app.isQuitting = false; // Para manejar el cierre vs. ocultar en la bandeja
 
 if (process.platform === 'win32') {
   app.setAppUserModelId("SondaClick.Mexico");
@@ -49,7 +52,7 @@ function startBackend(): Promise<void> {
     // Ajuste para la ruta del backend ejecutable en modo empaquetado
     const backendExecutablePath = app.isPackaged
       ? path.join(app.getAppPath(), 'packaged-backend', 'SondaClickBackend.exe') // <--- AJUSTADO
-      : path.join(projectRootDev, 'backend', 'dist', 'SondaClickBackend', 'SondaClickBackend.exe');
+      : path.join(projectRootDev, 'backend', 'dist', 'SondaClickBackend.exe');
 
     console.log(`[Main Process] Intentando iniciar backend desde: ${backendExecutablePath}`);
 
@@ -115,34 +118,32 @@ function showMainProcessNotification(title: string, body: string) {
   // ... (tu función showMainProcessNotification existente, sin cambios)
   if (Notification.isSupported()) {
     console.log("showMainProcessNotification: Mostrando notificación - Título:", title);
+    const iconPath = process.env.VITE_PUBLIC ? path.join(process.env.VITE_PUBLIC, 'icon.ico') : path.join(RENDERER_DIST, 'icon.ico');
     const notification = new Notification({
       title: title,
       body: body,
-      icon: path.join(APP_ROOT, 'public', 'icon.ico')
+      icon: iconPath
     });
     notification.show();
 
     notification.on('click', () => {
       console.log('Notificación del proceso principal clickeada:', title);
-      if (win) {
-        win.focus();
-      }
+      win?.show(); // Muestra la ventana al hacer clic en la notificación
+      win?.focus();
     });
 
-    notification.on('close', () => {
-      console.log('Notificación del proceso principal cerrada:', title);
-    });
-
+    notification.on('close', () => console.log('Notificación del proceso principal cerrada:', title));
   } else {
     console.log('Las notificaciones no son compatibles en este sistema (desde main).');
   }
 }
 
 function createWindow() {
+  const iconPath = process.env.VITE_PUBLIC ? path.join(process.env.VITE_PUBLIC, 'icon.ico') : path.join(RENDERER_DIST, 'icon.ico');
   win = new BrowserWindow({
     width: 1200,
     height: 800,
-    icon: path.join(APP_ROOT, 'public', 'icon.ico'),
+    icon: iconPath,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -151,9 +152,7 @@ function createWindow() {
   });
 
   win.webContents.on('did-finish-load', () => {
-    if (win) {
-      win.webContents.send('main-process-message', (new Date()).toLocaleString());
-    }
+    win?.webContents.send('main-process-message', (new Date()).toLocaleString());
   });
   
   // La URL que carga tu frontend.
@@ -167,58 +166,172 @@ function createWindow() {
     // El frontend (React) se encargará de hacer las llamadas fetch al backend en localhost:5000
     win.loadFile(path.join(RENDERER_DIST, 'index.html'));
   }
+
+  win.on('close', (event) => {
+    // @ts-expect-error ignoring
+    if (!app.isQuitting) {
+      event.preventDefault();
+      win?.hide();
+    } else {
+      // Si estamos saliendo, permite que la ventana se cierre normalmente.
+      // Esto es importante para que 'window-all-closed' se dispare correctamente si es la última ventana.
+    }
+  });
+
+  win.on('closed', () => {
+    // win = null; // No es necesario si se maneja el cierre de la app de otra forma
+  });
 }
 
+function createTray() {
+  const iconName = 'icon.ico';
+  const iconPath = process.env.VITE_PUBLIC ? path.join(process.env.VITE_PUBLIC, iconName) : path.join(RENDERER_DIST, iconName);
+  
+  console.log(`[Main Process] Intentando cargar icono para Tray desde: ${iconPath}`);
+  let image;
+  try {
+    image = nativeImage.createFromPath(iconPath);
+    if (image.isEmpty()) {
+      console.error(`[Main Process] Error: La imagen del icono en ${iconPath} está vacía o no se pudo cargar.`);
+      return;
+    }
+  } catch (error) {
+    console.error(`[Main Process] Error al crear nativeImage desde ${iconPath}:`, error);
+    return;
+  }
+
+  tray = new Tray(image);
+
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: 'Abrir SondaClick',
+      click: () => {
+        win?.show();
+        win?.focus();
+      },
+    },
+    { type: 'separator' },
+    {
+      label: 'Salir de SondaClick',
+      click: () => {
+        // @ts-expect-error ignoring
+        app.isQuitting = true;
+        app.quit();
+      },
+    },
+  ]);
+
+  tray.setToolTip('SondaClick Agente');
+  tray.setContextMenu(contextMenu);
+
+  tray.on('click', () => {
+    if (win) {
+      win.isVisible() && !win.isMinimized() ? win.hide() : win.show();
+    }
+  });
+}
+
+app.on('before-quit', () => {
+  console.log('[Main Process] Evento before-quit recibido.');
+  // @ts-expect-error ignoring
+  app.isQuitting = true;
+});
+
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit(); // Esto disparará 'will-quit'
-    // win = null; // No es necesario aquí si app.quit() se llama
+  // @ts-expect-error ignoring
+  if (app.isQuitting) { // Si estamos saliendo intencionadamente, permite que la app se cierre.
+    if (process.platform !== 'darwin') {
+      app.quit();
+    }
+  } else {
+    // Si no estamos saliendo (ej. solo se cerró la ventana), no hacer nada.
+    // La aplicación seguirá en la bandeja del sistema.
+    console.log('[Main Process] Todas las ventanas cerradas, pero la app sigue en la bandeja.');
   }
 });
 
-// Manejador para cerrar el backend cuando la app se cierra
 app.on('will-quit', () => {
-  if (backendProcess) {
-    console.log('[Main Process] Intentando terminar el proceso del backend...');
-    const killed = backendProcess.kill(); // Intenta terminar el proceso
-    if (killed) {
-      console.log('[Main Process] Señal de terminación enviada al proceso del backend.');
-    } else {
-      console.log('[Main Process] Fallo al enviar señal de terminación. Puede que ya haya terminado.');
+  if (tray) {
+    console.log('[Main Process] Destruyendo icono de la bandeja del sistema.');
+    tray.destroy();
+    tray = null;
+  }
+
+  const backendExecutableName = 'SondaClickBackend.exe';
+  if (process.platform === 'win32') {
+    console.log(`[Main Process] Intentando terminar todos los procesos ${backendExecutableName} usando taskkill /IM...`);
+    exec(`taskkill /IM ${backendExecutableName} /F /T`, (error, stdout, stderr) => {
+      if (error) {
+        if (error.message.toLowerCase().includes('no running instances') || error.message.toLowerCase().includes('no se encontraron instancias')) {
+          console.log(`[Main Process] No se encontraron instancias de ${backendExecutableName} en ejecución.`);
+        } else {
+          console.error(`[Main Process] Error al intentar terminar ${backendExecutableName} con taskkill /IM: ${error.message}`);
+        }
+      }
+      if (stderr && !stderr.toLowerCase().includes('no se encontraron instancias')) {
+          console.warn(`[Main Process] taskkill /IM stderr: ${stderr}`);
+      }
+      if (stdout) {
+          console.log(`[Main Process] taskkill /IM stdout: ${stdout}`);
+      }
+      console.log(`[Main Process] Comando taskkill /IM ${backendExecutableName} ejecutado.`);
+    });
+  } else {
+    if (backendProcess && backendProcess.pid) {
+      console.log('[Main Process] Intentando terminar el proceso del backend (no Windows)...');
+      const killed = backendProcess.kill();
+      console.log(killed ? '[Main Process] Señal de terminación enviada (no Windows).' : '[Main Process] Fallo al enviar señal (no Windows).');
     }
+  }
+  if (backendProcess) {
     backendProcess = null;
   }
 });
 
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
-    // No iniciar backend aquí de nuevo, solo crear ventana si es necesario
-    // y si el backend ya está (o debería estar) corriendo.
-    if (win === null && backendProcess) { // Solo crea ventana si el backend se inició bien
-        createWindow();
-    } else if (win === null && !backendProcess) {
-        console.warn("[Main Process] activate event: Backend no está corriendo, no se creará ventana. Revisar inicio.");
+    // @ts-expect-error ignoring
+    if (!app.isQuitting) { // Solo recrear ventana si no estamos saliendo
+        // Verificar si el backend está corriendo antes de crear la ventana
+        // Esta es una verificación simple, podrías reusar checkIfBackendReady si es necesario
+        if (backendProcess) {
+            createWindow();
+        } else {
+            console.warn("[Main Process] activate event: Backend no está corriendo, no se creará ventana. Intentando reiniciar backend...");
+            // Opcional: intentar reiniciar el backend y luego crear la ventana
+            startBackend().then(() => {
+                createWindow();
+                if (tray) tray.destroy(); // Destruir el viejo tray si existe
+                createTray(); // Recrear tray por si acaso
+            }).catch(err => {
+                const errorMessage = err instanceof Error ? err.message : String(err);
+                dialog.showErrorBox("Error de Reactivación", `No se pudo reiniciar el backend al activar la aplicación. Error: ${errorMessage}`);
+            });
+        }
     }
+  } else {
+    win?.show(); // Si hay ventanas, pero la principal está oculta, muéstrala
+    win?.focus();
   }
 });
 
 app.whenReady().then(async () => {
-  console.log("[Main Process] app.whenReady: Iniciando backend...");
+  console.log("[Main Process] app.whenReady: Iniciando...");
   try {
-    await startBackend(); // Espera a que el backend se inicie y esté listo
-    console.log("[Main Process] Backend iniciado. Creando ventana...");
+    await startBackend();
+    console.log("[Main Process] Backend iniciado. Creando ventana y Tray...");
     createWindow();
+    createTray(); // Crear el icono en la bandeja después de la ventana
 
-    // Mueve tu notificación de bienvenida aquí, después de que todo esté listo
     setTimeout(() => {
       showMainProcessNotification("¡Bienvenido a SondaClick!", "La aplicación se ha iniciado correctamente.");
-    }, 1000); // Un pequeño retraso después de crear la ventana
+    }, 1000);
 
   } catch (error) {
     console.error("[Main Process] Error crítico durante el inicio:", error);
-    // Aquí podrías mostrar un diálogo de error al usuario antes de salir.
-    // Por ejemplo, usando dialog.showErrorBox
     dialog.showErrorBox("Error Crítico de Inicio", "No se pudo iniciar el componente del backend. La aplicación se cerrará.\n\nDetalles: " + (error instanceof Error ? error.message : String(error)));
+    // @ts-expect-error ignoring
+    app.isQuitting = true; // Asegurar que la app se cierre
     app.quit();
   }
 

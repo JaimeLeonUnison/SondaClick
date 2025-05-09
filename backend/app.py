@@ -1,6 +1,7 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 #from dotenv import load_dotenv
+import threading
 import wmi
 import psutil
 import socket
@@ -14,7 +15,7 @@ import ctypes
 import re
 import os
 import pymysql
-import pythoncom # <--- AÑADE ESTA LÍNEA
+import pythoncom
 
 app = Flask(__name__)
 CORS(app)  # Permite que el frontend (React) haga peticiones
@@ -33,7 +34,8 @@ def get_connection():
             user=os.getenv('DB_USER', 'root'),
             password=os.getenv('DB_PASSWORD', ''),
             database=os.getenv('DB_NAME', 'prueba'),
-            port=int(os.getenv('DB_PORT', 3306))
+            port=int(os.getenv('DB_PORT', 3306)),
+            charset='utf8mb4',
         )
         return connection
     except Exception as e:
@@ -248,7 +250,7 @@ def save_system_info(hostname, cpu_percent, memory_percent, disk_percent, temper
             # NUEVO: Insertar también en NotificacionesClientes
             try:
                 # Crear un mensaje personalizado para la notificación
-                mensaje = f"⚠️ Alerta crítica en {hostname}: {', '.join(critical_reason)}"
+                mensaje = f" Alerta crítica en {hostname}: {', '.join(critical_reason)}"
                 
                 # Determinar el tipo de notificación (1=CPU, 2=Memoria, 3=Temperatura)
                 tipo_notificacion = 0
@@ -287,9 +289,9 @@ def save_system_info(hostname, cpu_percent, memory_percent, disk_percent, temper
                 notification_result = execute_query(insert_query, insert_params)
                 
                 if notification_result:
-                    print(f"✅ Notificación guardada correctamente para {hostname}")
+                    print(f" Notificación guardada correctamente para {hostname}")
                 else:
-                    print(f"⚠️ Error al guardar la notificación para {hostname}")
+                    print(f" Error al guardar la notificación para {hostname}")
                 
             except Exception as notif_error:
                 print(f"Error al guardar notificación: {notif_error}")
@@ -365,9 +367,14 @@ def get_cpu_speed():
 
 def get_gpu_temp():
     try:
+        cflags = 0
+        if platform.system() == "Windows":
+            cflags = subprocess.CREATE_NO_WINDOW
+            
         output = subprocess.check_output(
             ["nvidia-smi", "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"],
-            encoding="utf-8"
+            encoding="utf-8",
+            creationflags=cflags
         )
         return int(output.strip())
     except Exception:
@@ -1582,6 +1589,30 @@ def open_password_dialog():
     except Exception as e:
         print(f"Error al abrir panel de contraseñas: {str(e)}")
         return jsonify({"success": False, "message": str(e)}), 500
+    
+@app.route('/shutdown', methods=['POST'])
+def shutdown_route():
+    """
+    Shuts down the Flask application.
+    This endpoint should be called by the main application when it's closing.
+    """
+    # For security, you might want to restrict this endpoint, e.g., to localhost requests
+    # if request.remote_addr != '127.0.0.1':
+    #     return jsonify(message="Forbidden: Access denied."), 403
+
+    shutdown_function = request.environ.get('werkzeug.server.shutdown')
+    if shutdown_function is None:
+        print('Not running with the Werkzeug Server or shutdown function not available.')
+        # As a fallback, especially if not using Werkzeug or if it fails,
+        # schedule a forced exit. This is a more abrupt shutdown.
+        # A small delay can help ensure the HTTP response is sent.
+        print('Attempting to force exit the application.')
+        threading.Timer(0.5, lambda: os._exit(0)).start()
+        return jsonify(message="Server is attempting a forced shutdown."), 200
+    else:
+        print('Server is shutting down via Werkzeug.')
+        shutdown_function()
+        return jsonify(message="Server is shutting down."), 200
 
 @app.route("/api/change-password", methods=["POST"])
 def change_password_endpoint():
@@ -1639,10 +1670,10 @@ def init_database():
         connection = get_connection()
         
         if not connection:
-            print("⚠️ No se pudo establecer conexión a la base de datos.")
+            print(" No se pudo establecer conexión a la base de datos.")
             return False
             
-        print("✅ Conexión a la base de datos establecida correctamente")
+        print(" Conexión a la base de datos establecida correctamente")
         
         # Verificar y actualizar el procedimiento almacenado
         try:
@@ -1658,12 +1689,14 @@ def init_database():
                 
                 # Si existe, eliminarlo y volver a crearlo
                 if result:
-                    print("⚠️ Actualizando el procedimiento almacenado 'Sp_CreaIncidente'...")
+                    print(" Actualizando el procedimiento almacenado 'Sp_CreaIncidente'...")
                     cursor.execute("DROP PROCEDURE IF EXISTS Sp_CreaIncidente")
                     connection.commit()
                 
                 # Crear el procedimiento con la estructura correcta, incluyendo MAC, Marca y Modelo
-                cursor.execute("""
+                # Asegúrate de que este string SQL no contenga caracteres extraños no visibles.
+                # Si el archivo app.py está guardado como UTF-8, los caracteres literales deberían estar bien.
+                sql_create_procedure = """
                 CREATE PROCEDURE Sp_CreaIncidente(
                     IN p_HostName VARCHAR(100),
                     IN p_NumeroSerie VARCHAR(100),
@@ -1714,7 +1747,8 @@ def init_database():
                         p_Modelo
                     );
                 END
-                """)
+                """
+                cursor.execute(sql_create_procedure)
                 connection.commit()
                 print("✅ Procedimiento almacenado 'Sp_CreaIncidente' actualizado correctamente")
                 
@@ -1726,24 +1760,58 @@ def init_database():
                 ORDER BY ORDINAL_POSITION
                 """)
                 params_info = cursor.fetchall()
-                print(f"Estructura verificada del procedimiento: {params_info}")
+                # Considera no imprimir directamente si params_info puede contener caracteres problemáticos
+                # o asegúrate de que tu consola/log pueda manejar UTF-8.
+                # print(f"Estructura verificada del procedimiento: {params_info}") 
                 
                 # Ahora verificar que la tabla tenga la estructura correcta
                 cursor.execute("""
                 DESCRIBE Incidentes
                 """)
                 table_structure = cursor.fetchall()
-                print(f"Estructura de la tabla Incidentes: {table_structure}")
+                # print(f"Estructura de la tabla Incidentes: {table_structure}")
                 
         except Exception as e:
-            print(f"⚠️ Error al actualizar el procedimiento almacenado: {e}")
+            # Intenta imprimir el error de una forma más segura si el error mismo contiene caracteres problemáticos
+            try:
+                print(f" Error al actualizar el procedimiento almacenado: {str(e).encode('utf-8', 'replace').decode('utf-8')}")
+            except:
+                print(" Error al actualizar el procedimiento almacenado (y error al imprimir el error).")
             
         connection.close()
         return True
     except Exception as e:
-        print(f"⚠️ Error inicializando la base de datos: {e}")
+        try:
+            print(f" Error inicializando la base de datos: {str(e).encode('utf-8', 'replace').decode('utf-8')}")
+        except:
+            print(" Error inicializando la base de datos (y error al imprimir el error).")
         return False
 
 if __name__ == "__main__":
     init_database()
-    app.run(debug=True)
+
+    # Importar sys para verificar si la aplicación está empaquetada
+    import sys
+    import os # Asegúrate de que os esté importado si usas os.getenv más adelante
+
+    # Determinar si estamos en modo desarrollo o producción/empaquetado
+    # getattr(sys, 'frozen', False) es True si está empaquetado por PyInstaller/cx_Freeze
+    # También puedes usar una variable de entorno si prefieres
+    is_packaged = getattr(sys, 'frozen', False)
+    
+    # Configurar debug y use_reloader basándose en si está empaquetado
+    # Para producción/empaquetado, debug y use_reloader deben ser False
+    run_debug_mode = not is_packaged  # True si NO está empaquetado (desarrollo)
+    use_reloader_mode = not is_packaged # True si NO está empaquetado (desarrollo)
+
+    # Si quieres ser más explícito con una variable de entorno para desarrollo:
+    # FLASK_ENV = os.getenv('FLASK_ENV')
+    # run_debug_mode = FLASK_ENV == 'development'
+    # use_reloader_mode = FLASK_ENV == 'development'
+    
+    print(f"SondaClick Backend: Iniciando en modo {'DESARROLLO (debug y reloader activos)' if run_debug_mode else 'PRODUCCIÓN/EMPAQUETADO (debug y reloader inactivos)'}")
+    print(f"  sys.frozen: {getattr(sys, 'frozen', 'No definido (no empaquetado)')}")
+    print(f"  run_debug_mode: {run_debug_mode}")
+    print(f"  use_reloader_mode: {use_reloader_mode}")
+
+    app.run(debug=run_debug_mode, use_reloader=use_reloader_mode, host='0.0.0.0', port=5000)

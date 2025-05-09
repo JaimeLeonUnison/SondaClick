@@ -315,7 +315,7 @@ function startBackend() {
   return new Promise((resolve, reject) => {
     const loadedEnv = loadEnvConfig();
     const projectRootDev = path__namespace.join(APP_ROOT, "..");
-    const backendExecutablePath = electron.app.isPackaged ? path__namespace.join(electron.app.getAppPath(), "packaged-backend", "SondaClickBackend.exe") : path__namespace.join(projectRootDev, "backend", "dist", "SondaClickBackend", "SondaClickBackend.exe");
+    const backendExecutablePath = electron.app.isPackaged ? path__namespace.join(electron.app.getAppPath(), "packaged-backend", "SondaClickBackend.exe") : path__namespace.join(projectRootDev, "backend", "dist", "SondaClickBackend.exe");
     console.log(`[Main Process] Intentando iniciar backend desde: ${backendExecutablePath}`);
     const backendEnv = {
       ...process.env,
