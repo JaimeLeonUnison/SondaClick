@@ -66,6 +66,29 @@ function App(): React.ReactElement {
     useState<boolean>(false);
   const { isInDomain, isLoading: isDomainLoading } = useDomainCheck();
 
+  console.log("HOOK VALS - isDomainLoading:", isDomainLoading, "isInDomain:", isInDomain);
+  if (info) {
+    console.log("INFO VAL - info.domain:", info.domain);
+  }
+
+  // Determinar si el botón de cambio de contraseña debe mostarse
+  let shouldShowPasswordButton = false;
+  if (info && !isDomainLoading && isInDomain) {
+    //Condición base: estar en dominio y que la carga termine
+    shouldShowPasswordButton = true;
+    console.log("ButtonLogic: Entró al IF principal (debería estar en dominio)");
+
+    if (info.domain && info.domain.toUpperCase() === "WORKGROUP") {
+      // Si el dominio es "WORKGROUP", no mostrar el botón
+      shouldShowPasswordButton = false;
+      console.log("ButtonLogic: Dominio es WORKGROUP, ocultando botón");
+    }
+  } else {
+    console.log("ButtonLogic: NO entró al IF principal (debería estar fuera de dominio o cargando)");
+  }
+  console.log("ButtonLogic: Final shouldShowPasswordButton:", shouldShowPasswordButton);
+
+
   useEffect(() => {
     const fetchInfo = async (): Promise<void> => {
       try {
@@ -213,7 +236,7 @@ function App(): React.ReactElement {
         {info && !loading && (
           <div className="flex-shrink-0 w-full sm:w-auto flex flex-col sm:flex-row gap-2 justify-center">
             {/* Solo mostrar el botón si está en un dominio */}
-            {!isDomainLoading && isInDomain && (
+            {shouldShowPasswordButton && (
               <PasswordChangeButton
                 useNativeDialog={false}
                 changePassword={changePassword}

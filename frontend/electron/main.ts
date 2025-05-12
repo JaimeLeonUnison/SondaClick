@@ -56,11 +56,15 @@ function startBackend(): Promise<void> {
       ? path.join(app.getAppPath(), 'packaged-backend', backendExecutableName) // Usar una carpeta específica para el backend empaquetado
       : path.join(projectRootDev, 'backend', 'dist', backendExecutableName);
 
-    console.log(`[Main Process] Intentando iniciar backend desde: ${backendExecutablePath}`);
+    console.log(`[Main Process - startBackend] Intentando iniciar backend desde: ${backendExecutablePath}`);
 
     if (!fs.existsSync(backendExecutablePath)) {
-      const errorMsg = `[Main Process] Error: El ejecutable del backend no se encontró en ${backendExecutablePath}`;
+      const errorMsg = `[Main Process - startBackend] Error: El ejecutable del backend no se encontró en ${backendExecutablePath}`;
       console.error(errorMsg);
+      // En producción, muestra un diálogo de error si el backend no se encuentra
+      if (app.isPackaged) {
+        dialog.showErrorBox("Error Crítico de Backend", `El archivo del backend no se encontró en la ruta esperada: ${backendExecutablePath}. La aplicación no puede continuar.`);
+      }
       reject(new Error(errorMsg));
       return;
     }
@@ -78,17 +82,25 @@ function startBackend(): Promise<void> {
       env: backendEnv,
       stdio: 'inherit', // Cambiar a ['ignore', out, err] si quieres redirigir a archivos de log
     });
+    console.log("[Main Process - startBackend] Proceso backend invocado.");
 
     backendProcess.on('error', (err) => {
-      console.error('[Main Process] Fallo al iniciar el proceso del backend:', err);
-      backendProcess = null; 
+      console.error('[Main Process - startBackend] Fallo al iniciar el proceso del backend:', err);
+      if (app.isPackaged) {
+        dialog.showErrorBox("Error de Backend", "No se pudo iniciar el proceso del backend: " + err.message);
+      }
+      backendProcess = null;
       reject(err);
     });
 
     backendProcess.on('exit', (code, signal) => {
-      console.log(`[Main Process] Proceso del backend terminó con código ${code} y señal ${signal}`);
+      console.log(`[Main Process - startBackend] Proceso del backend terminó con código ${code} y señal ${signal}`);
+      // @ts-expect-error // isQuitting is a custom flag to manage app lifecycle
+      if (code !== 0 && app.isPackaged && !app.isQuitting) { // Si termina con error en producción y no estamos saliendo
+        dialog.showErrorBox("Error de Backend", `El proceso del backend terminó inesperadamente. Código: ${code}, Señal: ${signal}. Por favor, reinicie la aplicación.`);
+      }
       backendProcess = null;
-      // Considerar si se debe intentar reiniciar o notificar al usuario si el backend termina inesperadamente
+      // Considerar si se debe llamar a reject(new Error(...)) aquí si el backend termina prematuramente
     });
 
     let retries = 0;
@@ -246,6 +258,15 @@ function createWindow() {
     }
     // Si app.isQuitting es true, la ventana se cerrará normalmente.
   });
+
+  // ABRIR DEVTOOLS EN PRODUCCIÓN (SOLO PARA DEPURACIÓN)
+  if (app.isPackaged) {
+    console.log("[Main Process - createWindow] Aplicación empaquetada. Abriendo DevTools para depuración.");
+    win?.webContents.openDevTools(); // Asegúrate que 'win' esté definido aquí
+  } else {
+    console.log("[Main Process - createWindow] Aplicación en desarrollo. Abriendo DevTools.");
+    win?.webContents.openDevTools();
+  }
 }
 
 function createTray() {
