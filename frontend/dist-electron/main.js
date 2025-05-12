@@ -2,7 +2,7 @@
 const electron = require("electron");
 const path$1 = require("path");
 const child_process = require("child_process");
-const require$$0 = require("fs");
+const fs$1 = require("fs");
 const require$$2 = require("os");
 const require$$3 = require("crypto");
 function _interopNamespaceDefault(e) {
@@ -22,12 +22,13 @@ function _interopNamespaceDefault(e) {
   return Object.freeze(n);
 }
 const path__namespace = /* @__PURE__ */ _interopNamespaceDefault(path$1);
+const fs__namespace = /* @__PURE__ */ _interopNamespaceDefault(fs$1);
 var main = { exports: {} };
 const version$1 = "16.5.0";
 const require$$4 = {
   version: version$1
 };
-const fs = require$$0;
+const fs = fs$1;
 const path = path$1;
 const os = require$$2;
 const crypto = require$$3;
@@ -296,17 +297,26 @@ let win = null;
 let backendProcess = null;
 const backendPort = 5e3;
 let tray = null;
+let isHidden = false;
 electron.app.isQuitting = false;
 function loadEnvConfig() {
   const projectRootDev = path__namespace.join(APP_ROOT, "..");
   const envPath = electron.app.isPackaged ? path__namespace.join(electron.app.getAppPath(), "packaged-resources", ".env") : path__namespace.join(projectRootDev, ".env");
   console.log(`[Main Process] Intentando cargar .env desde: ${envPath}`);
+  if (!fs__namespace.existsSync(envPath)) {
+    console.warn(`[Main Process] Advertencia: Archivo .env no encontrado en ${envPath}`);
+  }
   const result = config_1({ path: envPath });
   if (result.error) {
     console.error("[Main Process] Error cargando el archivo .env:", result.error);
     electron.dialog.showErrorBox("Error de Configuración", `No se pudo cargar el archivo .env desde ${envPath}. La aplicación podría no funcionar correctamente.`);
   } else {
-    console.log("[Main Process] .env cargado exitosamente.");
+    if (Object.keys(result.parsed || {}).length > 0) {
+      console.log("[Main Process] .env cargado exitosamente.");
+    } else if (!fs__namespace.existsSync(envPath)) ;
+    else {
+      console.warn("[Main Process] .env encontrado pero vacío o con error de parseo no capturado.");
+    }
   }
   return result.parsed || {};
 }
@@ -314,8 +324,15 @@ function startBackend() {
   return new Promise((resolve, reject) => {
     const loadedEnv = loadEnvConfig();
     const projectRootDev = path__namespace.join(APP_ROOT, "..");
-    const backendExecutablePath = electron.app.isPackaged ? path__namespace.join(electron.app.getAppPath(), "packaged-backend", "SondaClickBackend.exe") : path__namespace.join(projectRootDev, "backend", "dist", "SondaClickBackend.exe");
+    const backendExecutableName = "SondaClickBackend.exe";
+    const backendExecutablePath = electron.app.isPackaged ? path__namespace.join(electron.app.getAppPath(), "packaged-backend", backendExecutableName) : path__namespace.join(projectRootDev, "backend", "dist", backendExecutableName);
     console.log(`[Main Process] Intentando iniciar backend desde: ${backendExecutablePath}`);
+    if (!fs__namespace.existsSync(backendExecutablePath)) {
+      const errorMsg = `[Main Process] Error: El ejecutable del backend no se encontró en ${backendExecutablePath}`;
+      console.error(errorMsg);
+      reject(new Error(errorMsg));
+      return;
+    }
     const backendEnv = {
       ...process.env,
       ...loadedEnv
@@ -326,6 +343,7 @@ function startBackend() {
       cwd: cwdPath,
       env: backendEnv,
       stdio: "inherit"
+      // Cambiar a ['ignore', out, err] si quieres redirigir a archivos de log
     });
     backendProcess.on("error", (err) => {
       console.error("[Main Process] Fallo al iniciar el proceso del backend:", err);
@@ -339,6 +357,7 @@ function startBackend() {
     let retries = 0;
     const maxRetries = 20;
     const checkInterval = 1500;
+    const initialDelay = 3e3;
     const checkIfBackendReady = () => {
       fetch(`http://localhost:${backendPort}/api/check-domain`).then((res) => {
         if (res.ok) {
@@ -353,42 +372,93 @@ function startBackend() {
           console.log(`[Main Process] Backend no listo, reintentando (${retries}/${maxRetries}). Error: ${err.message}`);
           setTimeout(checkIfBackendReady, checkInterval);
         } else {
-          console.error("[Main Process] Backend falló al iniciar después de múltiples reintentos.");
-          reject(new Error("Timeout del backend"));
+          const errorMsg = "[Main Process] Backend falló al iniciar después de múltiples reintentos.";
+          console.error(errorMsg);
+          reject(new Error("Timeout del backend: No se pudo conectar después de varios intentos."));
         }
       });
     };
-    setTimeout(checkIfBackendReady, 3e3);
+    setTimeout(checkIfBackendReady, initialDelay);
   });
 }
 function showMainProcessNotification(title, body) {
   if (electron.Notification.isSupported()) {
-    console.log("showMainProcessNotification: Mostrando notificación - Título:", title);
-    const iconPath = process.env.VITE_PUBLIC ? path__namespace.join(process.env.VITE_PUBLIC, "icon.ico") : path__namespace.join(RENDERER_DIST, "icon.ico");
+    console.log("[Main Process] showMainProcessNotification: Mostrando notificación - Título:", title);
+    const iconName = "icon.ico";
+    const iconPath = process.env.VITE_PUBLIC ? path__namespace.join(process.env.VITE_PUBLIC, iconName) : path__namespace.join(RENDERER_DIST, iconName);
+    if (!fs__namespace.existsSync(iconPath)) {
+      console.warn(`[Main Process] Icono de notificación no encontrado en ${iconPath}`);
+    }
     const notification = new electron.Notification({
       title,
       body,
-      icon: iconPath
+      icon: fs__namespace.existsSync(iconPath) ? iconPath : void 0
+      // Solo pasar el ícono si existe
     });
     notification.show();
     notification.on("click", () => {
-      console.log("Notificación del proceso principal clickeada:", title);
+      console.log("[Main Process] Notificación del proceso principal clickeada:", title);
       win == null ? void 0 : win.show();
       win == null ? void 0 : win.focus();
     });
-    notification.on("close", () => console.log("Notificación del proceso principal cerrada:", title));
+    notification.on("close", () => console.log("[Main Process] Notificación del proceso principal cerrada:", title));
   } else {
-    console.log("Las notificaciones no son compatibles en este sistema (desde main).");
+    console.log("[Main Process] Las notificaciones no son compatibles en este sistema.");
   }
 }
+function updateTrayMenu() {
+  if (!tray) return;
+  const toggleItem = menuTemplate.find((item) => item.id === "toggleWindow");
+  if (toggleItem) {
+    toggleItem.label = isHidden ? "Mostrar SondaClick" : "Ocultar SondaClick";
+  }
+  const newMenu = electron.Menu.buildFromTemplate(menuTemplate);
+  tray.setContextMenu(newMenu);
+}
+const menuTemplate = [
+  {
+    id: "toggleWindow",
+    label: "Ocultar SondaClick",
+    // Etiqueta inicial
+    click: () => {
+      if (win) {
+        if (isHidden) {
+          win.show();
+          if (process.platform === "darwin") {
+            electron.app.focus({ steal: true });
+          } else {
+            win.focus();
+          }
+        } else {
+          win.hide();
+        }
+        isHidden = !isHidden;
+        updateTrayMenu();
+      }
+    }
+  },
+  { type: "separator" },
+  {
+    id: "quit",
+    label: "Salir de SondaClick",
+    click: () => {
+      electron.app.isQuitting = true;
+      electron.app.quit();
+    }
+  }
+];
 function createWindow() {
-  const iconPath = process.env.VITE_PUBLIC ? path__namespace.join(process.env.VITE_PUBLIC, "icon.ico") : path__namespace.join(RENDERER_DIST, "icon.ico");
+  const iconName = "icon.ico";
+  const iconPath = process.env.VITE_PUBLIC ? path__namespace.join(process.env.VITE_PUBLIC, iconName) : path__namespace.join(RENDERER_DIST, iconName);
   win = new electron.BrowserWindow({
     width: 1200,
+    // Ancho original
     height: 800,
-    icon: iconPath,
+    // Alto original
+    icon: fs__namespace.existsSync(iconPath) ? iconPath : void 0,
     webPreferences: {
       preload: path__namespace.join(__dirname, "preload.js"),
+      // Tu preload existente
       nodeIntegration: false,
       contextIsolation: true
     }
@@ -399,12 +469,22 @@ function createWindow() {
   if (VITE_DEV_SERVER_URL) {
     win.loadURL(VITE_DEV_SERVER_URL);
   } else {
-    win.loadFile(path__namespace.join(RENDERER_DIST, "index.html"));
+    const indexPath = path__namespace.join(RENDERER_DIST, "index.html");
+    if (!fs__namespace.existsSync(indexPath)) {
+      console.error(`[Main Process] Error: index.html no encontrado en ${indexPath}`);
+      electron.dialog.showErrorBox("Error Crítico", `No se pudo cargar la interfaz de la aplicación. Archivo no encontrado: ${indexPath}`);
+      electron.app.isQuitting = true;
+      electron.app.quit();
+      return;
+    }
+    win.loadFile(indexPath);
   }
   win.on("close", (event) => {
     if (!electron.app.isQuitting) {
       event.preventDefault();
       win == null ? void 0 : win.hide();
+      isHidden = true;
+      updateTrayMenu();
     }
   });
 }
@@ -412,6 +492,10 @@ function createTray() {
   const iconName = "icon.ico";
   const iconPath = process.env.VITE_PUBLIC ? path__namespace.join(process.env.VITE_PUBLIC, iconName) : path__namespace.join(RENDERER_DIST, iconName);
   console.log(`[Main Process] Intentando cargar icono para Tray desde: ${iconPath}`);
+  if (!fs__namespace.existsSync(iconPath)) {
+    console.error(`[Main Process] Error: La imagen del icono para la bandeja no se encontró en ${iconPath}. No se creará la bandeja.`);
+    return;
+  }
   let image;
   try {
     image = electron.nativeImage.createFromPath(iconPath);
@@ -424,28 +508,19 @@ function createTray() {
     return;
   }
   tray = new electron.Tray(image);
-  const contextMenu = electron.Menu.buildFromTemplate([
-    {
-      label: "Abrir SondaClick",
-      click: () => {
-        win == null ? void 0 : win.show();
-        win == null ? void 0 : win.focus();
-      }
-    },
-    { type: "separator" },
-    {
-      label: "Salir de SondaClick",
-      click: () => {
-        electron.app.isQuitting = true;
-        electron.app.quit();
-      }
-    }
-  ]);
   tray.setToolTip("SondaClick Agente");
-  tray.setContextMenu(contextMenu);
+  updateTrayMenu();
   tray.on("click", () => {
     if (win) {
-      win.isVisible() && !win.isMinimized() ? win.hide() : win.show();
+      if (isHidden) {
+        win.show();
+        if (process.platform === "darwin") electron.app.focus({ steal: true });
+        else win.focus();
+      } else {
+        win.hide();
+      }
+      isHidden = !isHidden;
+      updateTrayMenu();
     }
   });
 }
@@ -458,7 +533,10 @@ if (!gotTheLock) {
     console.log("[Main Process] Se intentó abrir una segunda instancia.");
     if (win) {
       if (win.isMinimized()) win.restore();
+      if (!win.isVisible()) win.show();
       win.focus();
+      isHidden = false;
+      updateTrayMenu();
     }
   });
   if (process.platform === "win32") {
@@ -477,7 +555,9 @@ if (!gotTheLock) {
     } catch (error) {
       console.error("[Main Process] Error crítico durante el inicio:", error);
       const errorMessage = error instanceof Error ? error.message : String(error);
-      electron.dialog.showErrorBox("Error Crítico de Inicio", "No se pudo iniciar el componente del backend. La aplicación se cerrará.\n\nDetalles: " + errorMessage);
+      electron.dialog.showErrorBox("Error Crítico de Inicio", `No se pudo iniciar la aplicación correctamente. La aplicación se cerrará.
+
+Detalles: ${errorMessage}`);
       electron.app.isQuitting = true;
       electron.app.quit();
     }
@@ -487,16 +567,9 @@ if (!gotTheLock) {
     showMainProcessNotification(title, body);
   });
   electron.app.on("before-quit", (event) => {
-    if (electron.app.isQuitting) return;
-    console.log("[Main Process] Evento before-quit recibido. Iniciando secuencia de cierre ordenado...");
-    electron.app.isQuitting = true;
-    event.preventDefault();
-  });
-  electron.app.on("before-quit", (event) => {
+    if (!electron.app.isQuitting && event) ;
     console.log("[Main Process] Evento before-quit (lógica de limpieza mejorada) recibido.");
     electron.app.isQuitting = true;
-    event.preventDefault();
-    console.log("[Main Process] before-quit: Iniciando limpieza...");
     if (tray) {
       console.log("[Main Process] Destruyendo icono de la bandeja del sistema desde before-quit.");
       try {
@@ -514,78 +587,48 @@ if (!gotTheLock) {
       }
       electron.app.exit(0);
     };
-    const overallCleanupTimeoutDuration = 1e4;
+    const overallCleanupTimeoutDuration = 8e3;
     const overallCleanupTimer = setTimeout(() => {
       console.warn(`[Main Process] El tiempo de espera general de ${overallCleanupTimeoutDuration}ms para la limpieza ha expirado.`);
-      console.log("[Main Process] Timeout general: Forzando salida directa.");
       performExit();
     }, overallCleanupTimeoutDuration);
     const executeTaskkill = () => {
-      console.log("[Main Process] Procediendo con taskkill para el backend como fallback/verificación.");
+      console.log("[Main Process] Procediendo con taskkill para el backend.");
       if (process.platform === "win32") {
-        console.log(`[Main Process] Intentando terminar todos los procesos ${backendExecutableName} usando taskkill...`);
-        child_process.exec(`taskkill /IM "${backendExecutableName}" /F /T`, (error, stdout, stderr) => {
+        child_process.exec(`taskkill /IM "${backendExecutableName}" /F /T`, (error) => {
           clearTimeout(overallCleanupTimer);
-          if (error) {
-            const errorMessage = error.message.toLowerCase();
-            if (errorMessage.includes("no running instances") || errorMessage.includes("no se encontraron instancias") || errorMessage.includes("could not find the process")) {
-              console.log(`[Main Process] No se encontraron instancias de ${backendExecutableName} en ejecución (taskkill lo confirma o ya estaba cerrado).`);
-            } else {
-              console.error(`[Main Process] Error al intentar terminar ${backendExecutableName} con taskkill: ${error.message}`);
-            }
-          }
-          const stderrLower = stderr ? stderr.toLowerCase() : "";
-          if (stderr && !stderrLower.includes("no se encontraron instancias") && !stderrLower.includes("no running instances") && !stderrLower.includes("could not find the process")) {
-            console.warn(`[Main Process] taskkill stderr: ${stderr}`);
-          }
-          if (stdout) {
-            console.log(`[Main Process] taskkill stdout: ${stdout}`);
-          }
           console.log(`[Main Process] Comando taskkill para ${backendExecutableName} ejecutado.`);
           performExit();
         });
       } else {
-        if (backendProcess && backendProcess.pid && !backendProcess.killed) {
-          console.log("[Main Process] Intentando terminar el proceso del backend (no Windows) con SIGKILL...");
-          const killed = backendProcess.kill("SIGKILL");
-          console.log(killed ? "[Main Process] Señal SIGKILL enviada al backend (no Windows)." : "[Main Process] Fallo al enviar señal SIGKILL (no Windows).");
-        } else {
-          console.log("[Main Process] Proceso backend (no Windows) no encontrado, ya terminado o sin PID.");
-        }
         clearTimeout(overallCleanupTimer);
         performExit();
       }
     };
-    const attemptGracefulShutdown = () => {
+    if (backendProcess) {
       console.log(`[Main Process] Intentando cierre ordenado del backend en http://localhost:${backendPort}/shutdown`);
       const controller = new AbortController();
       const gracefulSignal = controller.signal;
-      const fetchSpecificTimeout = 2500;
+      const fetchSpecificTimeout = 2e3;
       const fetchTimer = setTimeout(() => controller.abort(), fetchSpecificTimeout);
       fetch(`http://localhost:${backendPort}/shutdown`, { method: "POST", signal: gracefulSignal }).then((response) => {
         clearTimeout(fetchTimer);
-        console.log(`[Main Process] Solicitud de cierre ordenado enviada. Respuesta del backend: ${response.status}`);
-        setTimeout(() => {
-          console.log("[Main Process] Pausa después de intento de cierre ordenado completada.");
-          executeTaskkill();
-        }, 1e3);
+        console.log(`[Main Process] Solicitud de cierre ordenado enviada. Respuesta: ${response.status}`);
+        setTimeout(executeTaskkill, 500);
       }).catch((err) => {
         clearTimeout(fetchTimer);
-        if (err.name === "AbortError") {
-          console.warn("[Main Process] Timeout durante el intento de cierre ordenado del backend (fetch abortado).");
-        } else {
-          console.warn("[Main Process] Error durante el intento de cierre ordenado del backend (puede ser normal):", err.message);
-        }
+        if (err.name === "AbortError") ;
         executeTaskkill();
       });
-    };
-    attemptGracefulShutdown();
+    } else {
+      console.log("[Main Process] No hay proceso backend registrado o ya se ha cerrado. Procediendo con la salida.");
+      clearTimeout(overallCleanupTimer);
+      performExit();
+    }
   });
   electron.app.on("window-all-closed", () => {
     if (electron.app.isQuitting) {
-      if (process.platform !== "darwin") {
-        electron.app.quit();
-      }
+      if (process.platform !== "darwin") ;
     } else {
       console.log("[Main Process] Todas las ventanas cerradas, pero la app sigue en la bandeja.");
     }
@@ -593,29 +636,27 @@ if (!gotTheLock) {
   electron.app.on("activate", () => {
     if (electron.BrowserWindow.getAllWindows().length === 0) {
       if (!electron.app.isQuitting) {
-        if (backendProcess) {
-          createWindow();
-        } else {
+        if (!backendProcess) {
           console.warn("[Main Process] activate event: Backend no está corriendo. Intentando reiniciar backend...");
           startBackend().then(() => {
             createWindow();
-            if (tray) {
-              try {
-                tray.destroy();
-              } catch (e) {
-                console.error("Error destruyendo tray en activate:", e);
-              }
-            }
-            createTray();
+            if (!tray) createTray();
+            else updateTrayMenu();
           }).catch((err) => {
             const errorMessage = err instanceof Error ? err.message : String(err);
             electron.dialog.showErrorBox("Error de Reactivación", `No se pudo reiniciar el backend al activar la aplicación. Error: ${errorMessage}`);
           });
+        } else {
+          createWindow();
+          if (!tray) createTray();
+          else updateTrayMenu();
         }
       }
     } else {
       win == null ? void 0 : win.show();
       win == null ? void 0 : win.focus();
+      isHidden = false;
+      updateTrayMenu();
     }
   });
 }

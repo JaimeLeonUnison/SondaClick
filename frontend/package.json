@@ -10,7 +10,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "prepackage": "node ../scripts/prepare-package-files.js",
-    "package": "npx electron-packager . SondaClickMX --platform=win32 --arch=x64 --icon=public/icon.ico --overwrite", 
+    "package": "npx electron-packager . SondaClickMX --platform=win32 --arch=x64 --icon=public/icon.ico --overwrite",
     "build-msi": "node ../build_installer.js",
     "electron": "electron ."
   },
