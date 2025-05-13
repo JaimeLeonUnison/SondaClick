@@ -4,14 +4,20 @@
   "description": "Aplicación SondaClickMX",
   "main": "build_installer.js",
   "scripts": {
-    "build:backend": "cd backend && pyinstaller --onefile --name SondaClickBackend --noconsole app.py", 
-    "build:frontend:package": "cd frontend && npm run package", 
-    "build:frontend:msi": "cd frontend && npm run build-msi",
-    "build:all": "npm run build:backend && npm run build:frontend:package && npm run build:frontend:msi"
+    "clean:backend": "cd backend && rimraf dist build",
+    "clean:frontend": "cd frontend && rimraf dist SondaClickMX-win32-x64",
+    "clean:installer": "rimraf windows_installer",
+    "clean:all": "npm run clean:backend && npm run clean:frontend && npm run clean:installer",
+    "build:backend": "cd backend && pyinstaller --onefile --name SondaClickBackend --noconsole app.py",
+    "build:frontend:vite": "cd frontend && npm run build",
+    "build:frontend:package": "cd frontend && npm run package",
+    "build:frontend:msi": "node build_installer.js",
+    "build:all": "npm run clean:all && npm run build:backend && npm run build:frontend:vite && npm run build:frontend:package && npm run build:frontend:msi"
   },
   "devDependencies": {
     "electron-builder": "^24.13.3",
     "electron-wix-msi": "^5.1.3",
-    "fs-extra": "^11.3.0"
+    "fs-extra": "^11.3.0",
+    "rimraf": "^6.0.1"
   }
 }

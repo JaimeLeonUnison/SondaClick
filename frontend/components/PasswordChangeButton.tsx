@@ -62,7 +62,7 @@ const PasswordChangeButton: React.FC<PasswordChangeButtonProps> = ({
   // Función para obtener los datos de contraseña directamente
   const fetchPasswordInfo = React.useCallback(async () => {
     try {
-      const response = await fetch('/api/password-info');
+      const response = await fetch('http://localhost:5000/api/password-info');
       const data = await response.json();
       
       if (data.success) {
@@ -110,7 +110,7 @@ const PasswordChangeButton: React.FC<PasswordChangeButtonProps> = ({
       
       // 2. Intentar obtener información completa del usuario
       try {
-        const response = await fetch('/api/user-details');
+        const response = await fetch('http://localhost:5000/api/user-details');
         const data = await response.json();
 
         if (data && data.userDetails) {

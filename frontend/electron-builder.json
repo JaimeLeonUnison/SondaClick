@@ -1,22 +1,25 @@
 {
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
-  "appId": "YourAppID",
+  "appId": "com.sondaclick.app",
   "asar": true,
-  "productName": "YourAppName",
+  "productName": "SondaClick", 
   "directories": {
-    "output": "release/${version}"
+    "output": "release/${version}",
+    "buildResources": "build" 
   },
   "files": [
     "dist",
     "dist-electron"
   ],
   "mac": {
+    "icon": "../frontend/public/icon.ico", 
     "target": [
       "dmg"
     ],
     "artifactName": "${productName}-Mac-${version}-Installer.${ext}"
   },
   "win": {
+    "icon": "../frontend/public/icon.ico", 
     "target": [
       {
         "target": "nsis",
@@ -34,6 +37,7 @@
     "deleteAppDataOnUninstall": false
   },
   "linux": {
+    "icon": "build/sondaclick-app-icon.png", 
     "target": [
       "AppImage"
     ],

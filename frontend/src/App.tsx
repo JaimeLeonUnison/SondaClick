@@ -91,16 +91,21 @@ function App(): React.ReactElement {
 
   useEffect(() => {
     const fetchInfo = async (): Promise<void> => {
+      console.log("[App.tsx - fetchInfo] Iniciando fetch de system-info."); // NUEVO
       try {
         if (isFirstLoad) {
           setLoading(true);
         }
 
         const res = await fetch("http://localhost:5000/api/system-info");
+        console.log("[App.tsx - fetchInfo] Respuesta de system-info, status:", res.status); // NUEVO
         if (!res.ok) {
-          throw new Error(`Error HTTP: ${res.status}`);
+          const errorText = await res.text(); // NUEVO: Intenta obtener más detalles del error
+          console.error("[App.tsx - fetchInfo] Error HTTP no OK:", res.status, errorText); // NUEVO
+          throw new Error(`Error HTTP: ${res.status} - ${errorText}`);
         }
         const data: SystemInfo = await res.json();
+        console.log("[App.tsx - fetchInfo] Datos de system-info recibidos:", data); // NUEVO
         setInfo(data);
         setError(null);
 
@@ -112,14 +117,16 @@ function App(): React.ReactElement {
           setHasShownSuccessToast(true); // Marcar como mostrada
         }
       } catch (err) {
-        console.error("Error al obtener datos:", err);
+        // Ya tienes un console.error aquí, lo cual es bueno.
+        console.error("[App.tsx - fetchInfo] Error al obtener datos de system-info:", err);
         setError(
           "No se pudo conectar con el servidor. Verifica que el backend esté en ejecución."
         );
         toast.error("Fallo al conectar con el servidor.", { autoClose: false });
       } finally {
+        console.log("[App.tsx - fetchInfo] Fetch de system-info finalizado."); // NUEVO
         setLoading(false);
-        setIsFirstLoad(false); // Cambiar a false después de la primera carga
+        setIsFirstLoad(false);
       }
     };
 
@@ -147,6 +154,7 @@ function App(): React.ReactElement {
     oldPassword: string,
     newPassword: string
   ): Promise<string> => {
+    console.log("[App.tsx - changePassword] Intentando cambiar contraseña para usuario:", username); // NUEVO
     try {
       const response = await fetch(
         "http://localhost:5000/api/change-password",
@@ -157,13 +165,15 @@ function App(): React.ReactElement {
           },
           body: JSON.stringify({
             username,
-            oldPassword,
-            newPassword,
+            oldPassword, // Considera no loguear contraseñas directamente en producción final
+            newPassword, // Considera no loguear contraseñas directamente en producción final
           }),
         }
       );
+      console.log("[App.tsx - changePassword] Respuesta de change-password, status:", response.status); // NUEVO
 
       const data: PasswordChangeResponse = await response.json();
+      console.log("[App.tsx - changePassword] Datos de change-password recibidos:", data); // NUEVO
 
       if (!response.ok) {
         throw new Error(data.message || "Error al cambiar la contraseña");
@@ -171,12 +181,14 @@ function App(): React.ReactElement {
 
       return data.message;
     } catch (error) {
-      console.error("Error al cambiar la contraseña:", error);
+      // Ya tienes un console.error aquí.
+      console.error("[App.tsx - changePassword] Error al cambiar la contraseña:", error);
       throw error;
     }
   };
 
   const openNativePasswordChange = async (): Promise<void> => {
+    console.log("[App.tsx - openNativePasswordChange] Intentando abrir diálogo nativo de cambio de contraseña."); // NUEVO
     try {
       const response = await fetch(
         "http://localhost:5000/api/open-password-dialog",
@@ -187,23 +199,24 @@ function App(): React.ReactElement {
           },
         }
       );
+      console.log("[App.tsx - openNativePasswordChange] Respuesta de open-password-dialog, status:", response.status); // NUEVO
 
       const data = await response.json();
+      console.log("[App.tsx - openNativePasswordChange] Datos de open-password-dialog recibidos:", data); // NUEVO
       if (!response.ok) {
         console.error(
-          "Error al abrir el diálogo de cambio de contraseña:",
+          "[App.tsx - openNativePasswordChange] Error al abrir el diálogo de cambio de contraseña:",
           data.message
         );
-        // Mostrar error al usuario
         alert(`Error: ${data.message}`);
       } else {
-        // Mostrar instrucciones al usuario
         alert(
           data.message || "Se ha iniciado el proceso de cambio de contraseña"
         );
       }
     } catch (error) {
-      console.error("Error al conectar con el servidor:", error);
+      // Ya tienes un console.error aquí.
+      console.error("[App.tsx - openNativePasswordChange] Error al conectar con el servidor:", error);
       alert(
         "No se pudo conectar con el servidor. Verifica que el backend esté en ejecución."
       );
