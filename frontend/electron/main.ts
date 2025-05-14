@@ -262,10 +262,10 @@ function createWindow() {
   // ABRIR DEVTOOLS EN PRODUCCIÓN (SOLO PARA DEPURACIÓN)
   if (app.isPackaged) {
     console.log("[Main Process - createWindow] Aplicación empaquetada. Abriendo DevTools para depuración.");
-    win?.webContents.openDevTools(); // Asegúrate que 'win' esté definido aquí
+    //win?.webContents.openDevTools(); // Asegúrate que 'win' esté definido aquí
   } else {
     console.log("[Main Process - createWindow] Aplicación en desarrollo. Abriendo DevTools.");
-    win?.webContents.openDevTools();
+    //win?.webContents.openDevTools();
   }
 }
 

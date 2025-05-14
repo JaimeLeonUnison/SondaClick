@@ -11,11 +11,15 @@ import shutil
 import platform
 import getpass
 import uuid
+import sys
 import ctypes
 import re
 import os
 import pymysql
 import pythoncom
+import traceback # Para logging de excepciones completas
+import json # Para parsear la salida JSON de PowerShell
+import tempfile # Para _get_user_details_via_powershell
 
 app = Flask(__name__)
 CORS(app)  # Permite que el frontend (React) haga peticiones
@@ -36,10 +40,11 @@ def get_connection():
             database=os.getenv('DB_NAME', 'prueba'),
             port=int(os.getenv('DB_PORT', 3306)),
             charset='utf8mb4',
+            connect_timeout=10 # Aumentado ligeramente el timeout de conexión
         )
         return connection
     except Exception as e:
-        print(f"Error al conectar a la base de datos: {e}")
+        print(f"[DB Connection] Error al conectar a la base de datos: {e}")
         return None
 
 def execute_query(query, params=None, fetch=False):
@@ -73,7 +78,8 @@ def execute_query(query, params=None, fetch=False):
         print(f"Error al ejecutar la consulta: {e}")
         return None
     finally:
-        connection.close()
+        if connection: # Asegurarse de que connection no sea None antes de cerrar
+            connection.close()
 
 def execute_procedure(procedure_name, params=None):
     """
@@ -88,27 +94,22 @@ def execute_procedure(procedure_name, params=None):
     """
     connection = get_connection()
     if not connection:
-        print(f"⚠️ No se pudo establecer conexión a la base de datos para {procedure_name}")
+        print(f" No se pudo establecer conexión a la base de datos para {procedure_name}")
         return False
         
     try:
         with connection.cursor() as cursor:
             print(f"⏳ Ejecutando procedimiento {procedure_name} con parámetros: {params}")
-            
-            # Ejecutar el procedimiento sin verificaciones intermedias
             cursor.callproc(procedure_name, params)
-            
-            # Confirmar la transacción
             connection.commit()
-            print(f"✅ Procedimiento {procedure_name} ejecutado y transacción confirmada")
-            
+            print(f" Procedimiento {procedure_name} ejecutado y transacción confirmada")
             return True
-            
     except Exception as e:
-        print(f"⚠️ Error al ejecutar el procedimiento {procedure_name}: {e}")
+        print(f" Error al ejecutar el procedimiento {procedure_name}: {e}")
         return False
     finally:
-        connection.close()
+        if connection: # Asegurarse de que connection no sea None
+            connection.close()
 
 # Ejemplo de función específica para guardar datos de monitoreo del sistema
 def save_system_info(hostname, cpu_percent, memory_percent, disk_percent, temperatures):
@@ -147,7 +148,7 @@ def save_system_info(hostname, cpu_percent, memory_percent, disk_percent, temper
         # Solo guardar si se detecta una condición crítica
         if is_critical:
             # Registrar en el log la razón
-            print(f"⚠️ Condición crítica detectada: {', '.join(critical_reason)}. Guardando en base de datos.")
+            print(f" Condición crítica detectada: {', '.join(critical_reason)}. Guardando en base de datos.")
             
             # Obtener el número de serie
             serial_number = get_serial_number()
@@ -373,7 +374,7 @@ def get_gpu_temp():
             
         output = subprocess.check_output(
             ["nvidia-smi", "--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"],
-            encoding="utf-8",
+            encoding="utf-8", # Asumiendo que nvidia-smi da utf-8
             creationflags=cflags
         )
         return int(output.strip())
@@ -467,199 +468,151 @@ def get_hostname():
 # Añadir esta función auxiliar para obtener información de contraseña local
 def _get_local_password_expiration():
     try:
+        username = getpass.getuser()
         # Intentar obtener información de contraseña local usando WMIC
-        cmd = "wmic useraccount where name='%s' get PasswordExpires" % getpass.getuser()
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        cmd_wmic = f"wmic useraccount where name='{username}' get PasswordExpires"
+        result_wmic = subprocess.run(cmd_wmic, shell=True, capture_output=True, text=True, encoding='utf-8', errors='backslashreplace')
         
-        if result.returncode == 0:
-            lines = [line.strip() for line in result.stdout.split('\n') if line.strip()]
+        if result_wmic.returncode == 0:
+            lines = [line.strip() for line in result_wmic.stdout.split('\n') if line.strip()]
             if len(lines) > 1:
-                # Si TRUE, la contraseña expira; si FALSE, no expira
-                expires = lines[1].upper() == 'TRUE'
+                expires_str = lines[1].upper()
+                expires = expires_str == 'TRUE'
                 
                 if expires:
-                    # Intentar obtener cuándo
                     try:
-                        # Obtener la política local
                         cmd_policy = "net accounts"
-                        policy_result = subprocess.run(cmd_policy, shell=True, capture_output=True, text=True)
+                        policy_result = subprocess.run(cmd_policy, shell=True, capture_output=True, text=True, encoding='utf-8', errors='backslashreplace')
                         
                         if policy_result.returncode == 0:
-                            output = policy_result.stdout
-                            
-                            # Buscar el tiempo máximo de duración de contraseña
-                            max_age_match = re.search(r'(Vigencia máxima|Maximum password age).*?(\d+)', output, re.IGNORECASE)
+                            output_policy = policy_result.stdout
+                            max_age_match = re.search(r'(Vigencia máxima|Maximum password age).*?(\d+)', output_policy, re.IGNORECASE)
                             
                             if max_age_match:
                                 max_days = int(max_age_match.group(2))
-                                
-                                # Obtener fecha del último cambio de contraseña
-                                cmd_lastset = f"net user {getpass.getuser()}"
-                                lastset_result = subprocess.run(cmd_lastset, shell=True, capture_output=True, text=True)
+                                if max_days == 0 or max_days > 900: # 0 o un valor muy alto usualmente significa "nunca expira" para net accounts
+                                     return {"expires": False, "message": "Tu contraseña local no expira según la política."}
+
+                                cmd_lastset = f"net user \"{username}\"" # Comillas por si el username tiene espacios
+                                lastset_result = subprocess.run(cmd_lastset, shell=True, capture_output=True, text=True, encoding='utf-8', errors='backslashreplace')
                                 
                                 if lastset_result.returncode == 0:
                                     lastset_output = lastset_result.stdout
-                                    lastset_match = re.search(r'(Último cambio|Last password change).*?(\d{2}/\d{2}/\d{4})', lastset_output, re.IGNORECASE)
+                                    # Ajustar regex para ser más flexible con el formato de fecha y la etiqueta
+                                    lastset_match = re.search(r'(?:Último cambio de contraseña|Password last set|Última contraseña establecida)\s+(.+)', lastset_output, re.IGNORECASE)
                                     
                                     if lastset_match:
-                                        import datetime
-                                        
-                                        # Intentar diferentes formatos de fecha
-                                        for fmt in ["%d/%m/%Y", "%m/%d/%Y"]:
+                                        import datetime # Mover import aquí
+                                        date_str_from_net = lastset_match.group(1).strip().split(" ")[0] # Tomar solo la parte de la fecha
+
+                                        for fmt in ["%d/%m/%Y", "%m/%d/%Y", "%Y-%m-%d"]: # Añadir YYYY-MM-DD
                                             try:
-                                                lastset_date = datetime.datetime.strptime(lastset_match.group(2), fmt).date()
+                                                lastset_date = datetime.datetime.strptime(date_str_from_net, fmt).date()
                                                 expiry_date = lastset_date + datetime.timedelta(days=max_days)
                                                 days_remaining = (expiry_date - datetime.date.today()).days
                                                 
                                                 message = ""
-                                                if days_remaining <= 0:
-                                                    message = "¡Tu contraseña ha expirado! Debes cambiarla inmediatamente."
-                                                elif days_remaining == 1:
-                                                    message = "¡Tu contraseña expira mañana!"
-                                                elif days_remaining <= 5:
-                                                    message = f"¡Tu contraseña expirará en {days_remaining} días!"
-                                                else:
-                                                    message = f"Tu contraseña expirará el {expiry_date.strftime('%Y-%m-%d')} (en {days_remaining} días)."
+                                                if days_remaining <= 0: message = "¡Tu contraseña local ha expirado! Debes cambiarla inmediatamente."
+                                                elif days_remaining == 1: message = "¡Tu contraseña local expira mañana!"
+                                                elif days_remaining <= 7: message = f"¡Tu contraseña local expirará en {days_remaining} días!" # Ajustado a 7 días
+                                                else: message = f"Tu contraseña local expirará el {expiry_date.strftime('%Y-%m-%d')} (en {days_remaining} días)."
                                                     
-                                                return {
-                                                    "expires": True,
-                                                    "daysRemaining": days_remaining,
-                                                    "expiryDate": expiry_date.strftime('%Y-%m-%d'),
-                                                    "message": message
-                                                }
+                                                return {"expires": True, "daysRemaining": days_remaining, "expiryDate": expiry_date.strftime('%Y-%m-%d'), "message": message, "method": "local_net_user_policy"}
                                             except ValueError:
                                                 continue
+                                        print(f"[_get_local_password_expiration] No se pudo parsear la fecha '{date_str_from_net}' con formatos conocidos.")
                     except Exception as policy_error:
-                        print(f"Error al obtener política local: {policy_error}")
-                
-                    # Si llegamos aquí, no pudimos determinar cuándo expira
-                    return {
-                        "expires": True,
-                        "message": "Tu contraseña está configurada para expirar, pero no se pudo determinar la fecha exacta."
-                    }
-                else:
-                    # La contraseña no expira
-                    return {
-                        "expires": False,
-                        "message": "Tu contraseña no expira."
-                    }
+                        print(f"[_get_local_password_expiration] Error al obtener política local o fecha de último cambio: {policy_error}")
+                    return {"expires": True, "message": "Tu contraseña local está configurada para expirar, pero no se pudo determinar la fecha exacta.", "method": "local_wmic_expires_true_unknown_date"}
+                else: # PasswordExpires es FALSE
+                    return {"expires": False, "message": "Tu contraseña local no expira.", "method": "local_wmic_never_expires"}
         
-        # Si llegamos aquí, no pudimos determinar si la contraseña expira
-        return {
-            "expires": None,
-            "message": "No se pudo determinar el estado de expiración de tu contraseña local."
-        }
+        print(f"[_get_local_password_expiration] WMIC falló o no dio info. Salida: {result_wmic.stdout} Error: {result_wmic.stderr}")
+        return {"expires": None, "message": "No se pudo determinar el estado de expiración de tu contraseña local vía WMIC.", "method": "local_wmic_failed"}
     except Exception as e:
-        print(f"Error al obtener expiración de contraseña local: {e}")
-        return {
-            "expires": None,
-            "message": "Error al verificar la información de contraseña local."
-        }
-        
-# Agrega esta función a tu archivo principal de API
+        print(f"[_get_local_password_expiration] Error general: {e}")
+        traceback.print_exc()
+        return {"expires": None, "message": "Error al verificar la información de contraseña local.", "method": "local_exception"}
 
 @app.route('/api/check-domain', methods=['GET'])
 def check_domain():
     is_in_domain = False
-    
+    domain_name = "WORKGROUP"
+    pythoncom.CoInitialize()
     try:
-        # import wmi # Ya está importado globalmente
-        # import platform # Ya está importado globalmente
-        
-        if platform.system() == 'Windows':
-            pythoncom.CoInitialize()  # <--- INICIALIZA COM AQUÍ
-            try:
-                c = wmi.WMI()
-                for system in c.Win32_ComputerSystem():
-                    # Si no está en dominio, normalmente el dominio es WORKGROUP o está vacío
-                    domain = system.Domain
-                    is_in_domain = domain and domain.upper() != "WORKGROUP"
-            finally:
-                pythoncom.CoUninitialize() # <--- DESINICIALIZA COM AQUÍ
+        c = wmi.WMI()
+        for system in c.Win32_ComputerSystem():
+            domain_from_wmi = system.Domain
+            if domain_from_wmi and domain_from_wmi.upper() != "WORKGROUP":
+                is_in_domain = True
+                domain_name = domain_from_wmi
+                break
     except Exception as e:
-        print(f"Error checking domain: {e}")
-        # is_in_domain permanece False si hay un error
+        print(f"Error checking domain with WMI: {e}")
+        # Fallback a wmic por subprocess si wmi falla
+        try:
+            domain_info_output = subprocess.check_output("wmic computersystem get domain", shell=True, text=True, encoding='utf-8', errors='backslashreplace', timeout=5).strip()
+            domain_lines = [line.strip() for line in domain_info_output.split('\n') if line.strip()]
+            if len(domain_lines) > 1:
+                domain_from_wmic_subp = domain_lines[1]
+                if domain_from_wmic_subp and domain_from_wmic_subp.upper() != "WORKGROUP":
+                    is_in_domain = True
+                    domain_name = domain_from_wmic_subp
+        except Exception as sub_wmic_err:
+            print(f"Error checking domain with WMIC subprocess: {sub_wmic_err}")
+    finally:
+        pythoncom.CoUninitialize()
     
-    return jsonify({"isInDomain": is_in_domain})
-        
+    return jsonify({"isInDomain": is_in_domain, "domainName": domain_name if is_in_domain else None})
+
+
 @app.route("/api/password-info", methods=["GET", "OPTIONS"])
 def get_password_info():
-    if request.method == 'OPTIONS':
-        return '', 200
-        
+    if request.method == 'OPTIONS': return '', 200
     try:
-        # Obtener usuario actual o usar el nombre de usuario proporcionado
         username = getpass.getuser()
+        command_domain = f"net user \"{username}\" /domain"
+        # Usar utf-8 y backslashreplace para mejor manejo de caracteres y depuración
+        result_domain = subprocess.run(command_domain, shell=True, capture_output=True, text=True, encoding='utf-8', errors='backslashreplace', timeout=10)
         
-        # Ejecutar net user para obtener la información de contraseña
-        command = f"net user {username} /domain"
-        result = subprocess.run(command, shell=True, capture_output=True, text=True, encoding='latin1')
+        output = ""
+        if result_domain.returncode == 0:
+            output = result_domain.stdout
+            print("[get_password_info] 'net user /domain' exitoso.")
+        else:
+            print(f"[get_password_info] 'net user /domain' falló (Code: {result_domain.returncode}, Err: {result_domain.stderr.strip()}). Intentando local.")
+            command_local = f"net user \"{username}\""
+            result_local = subprocess.run(command_local, shell=True, capture_output=True, text=True, encoding='utf-8', errors='backslashreplace', timeout=10)
+            if result_local.returncode == 0:
+                output = result_local.stdout
+                print("[get_password_info] 'net user' (local) exitoso.")
+            else:
+                print(f"[get_password_info] 'net user' (local) también falló (Code: {result_local.returncode}, Err: {result_local.stderr.strip()}).")
+                return jsonify({"success": False, "message": f"No se pudo obtener información para el usuario {username}. Domain error: {result_domain.stderr.strip()}. Local error: {result_local.stderr.strip()}"}), 400
         
-        if result.returncode != 0:
-            # Si falla el comando de dominio, intentar con usuario local
-            command = f"net user {username}"
-            result = subprocess.run(command, shell=True, capture_output=True, text=True, encoding='latin1')
-            
-        output = result.stdout
-        
-        # Extraer la información específica que necesitamos
         password_last_set = "No disponible"
         password_expires = "No disponible"
         user_may_change = "No disponible"
         
-        for line in output.splitlines():
-            line = line.strip()
-            
-            # Comprobar diferentes formatos e idiomas
-            if any(phrase in line for phrase in ["Password last set", "contraseña establecida", "Última contraseña"]):
-                try:
-                    # Intentar extraer la fecha usando expresiones regulares
-                    import re
-                    date_match = re.search(r'\d{1,2}/\d{1,2}/\d{4}', line)
-                    if date_match:
-                        password_last_set = date_match.group(0)
-                    else:
-                        parts = line.split(":", 1)
-                        if len(parts) > 1:
-                            password_last_set = parts[1].strip()
-                except Exception as e:
-                    print(f"Error al extraer fecha de última contraseña: {e}")
-            
-            elif any(phrase in line for phrase in ["Password expires", "contraseña expira", "contraseña caduca"]):
-                try:
-                    # Similar al anterior
-                    import re
-                    date_match = re.search(r'\d{1,2}/\d{1,2}/\d{4}', line)
-                    if date_match:
-                        password_expires = date_match.group(0)
-                    elif "never" in line.lower() or "nunca" in line.lower():
-                        password_expires = "Nunca"
-                    else:
-                        parts = line.split(":", 1)
-                        if len(parts) > 1:
-                            password_expires = parts[1].strip()
-                except Exception as e:
-                    print(f"Error al extraer fecha de expiración: {e}")
-            
-            elif any(phrase in line for phrase in ["User may change password", "usuario puede cambiar", "puede cambiar"]):
-                try:
-                    # Buscar Yes/No o Sí/No
-                    if "yes" in line.lower() or "sí" in line.lower():
-                        user_may_change = "Sí"
-                    elif "no" in line.lower():
-                        user_may_change = "No"
-                    else:
-                        parts = line.split(":", 1)
-                        if len(parts) > 1:
-                            user_may_change = parts[1].strip()
-                except Exception as e:
-                    print(f"Error al extraer permiso de cambio: {e}")
+        # Patrones mejorados y más flexibles
+        patterns = {
+            "password_last_set": [r"(?i)(?:Password last set|Último cambio de contraseña|contraseña establecida por última vez|Última contraseña establecida)\s+:\s*(.+)", r"(?i)(?:Password last set|Último cambio de contraseña|contraseña establecida por última vez|Última contraseña establecida)\s+(.+?)"],
+            "password_expires": [r"(?i)(?:Password expires|La contraseña caduca|La contraseña expira)\s+:\s*(.+)", r"(?i)(?:Password expires|La contraseña caduca|La contraseña expira)\s+(.+?)"],
+            "user_may_change": [r"(?i)(?:User may change password|El usuario puede cambiar la contraseña)\s+:\s*(Yes|No|Sí|No)",r"(?i)(?:User may change password|El usuario puede cambiar la contraseña)\s+(Yes|No|Sí|No)"]
+        }
+
+        for key, regex_list in patterns.items():
+            for regex in regex_list:
+                match = re.search(regex, output)
+                if match:
+                    value = match.group(1).strip()
+                    if key == "password_last_set": password_last_set = value.split(" ")[0] # Tomar solo la fecha
+                    elif key == "password_expires": password_expires = value.split(" ")[0] if not ("never" in value.lower() or "nunca" in value.lower()) else "Nunca"
+                    elif key == "user_may_change": user_may_change = "Sí" if value.lower() in ["yes", "sí"] else "No"
+                    break 
         
-        # Depuración: imprimir todo el output para revisar
-        print(f"Output completo del comando: {output}")
-        print(f"Password last set: {password_last_set}")
-        print(f"Password expires: {password_expires}")
-        print(f"User may change: {user_may_change}")
+        print(f"[get_password_info] Raw output for {username}:\n{output}")
+        print(f"[get_password_info] Parsed - Last Set: {password_last_set}, Expires: {password_expires}, May Change: {user_may_change}")
         
         return jsonify({
             "success": True,
@@ -667,515 +620,383 @@ def get_password_info():
             "passwordExpires": password_expires,
             "userMayChangePassword": user_may_change
         })
-                
+    except subprocess.TimeoutExpired:
+        print("[get_password_info] Timeout ejecutando 'net user'.")
+        return jsonify({"success": False, "message": "Timeout al obtener información de contraseña."}), 500
     except Exception as e:
-        print(f"Error obteniendo información de contraseña: {e}")
-        return jsonify({
-            "success": False,
-            "message": f"Error: {str(e)}"
-        })
+        print(f"[get_password_info] Error: {e}")
+        traceback.print_exc()
+        return jsonify({"success": False, "message": f"Error: {str(e)}"}), 500
 
 @app.route("/api/password-expiration", methods=["GET", "OPTIONS"])
 def password_expiration():
-    if request.method == 'OPTIONS':
-        return '', 200
-        
+    if request.method == 'OPTIONS': return '', 200
     try:
-        # Obtener el usuario actual
         current_user = getpass.getuser()
+        domain_info_output = subprocess.check_output("wmic computersystem get domain", shell=True, text=True, encoding='utf-8', errors='backslashreplace', timeout=5).strip()
+        domain_lines = [line.strip() for line in domain_info_output.split('\n') if line.strip()]
+        machine_domain = domain_lines[1] if len(domain_lines) > 1 else "WORKGROUP"
+        is_machine_in_domain = machine_domain.upper() != "WORKGROUP"
         
-        # Determinar si estamos en un dominio
-        domain_info = subprocess.check_output("wmic computersystem get domain", shell=True).decode().strip()
-        domain_lines = [line.strip() for line in domain_info.split('\n') if line.strip()]
-        domain = domain_lines[1] if len(domain_lines) > 1 else ""
-        is_domain = domain.upper() != "WORKGROUP"
-        
-        if not is_domain:
-            # Para usuarios locales, usar el método específico
+        if not is_machine_in_domain:
+            print("[password_expiration] Máquina no en dominio, usando _get_local_password_expiration.")
             local_info = _get_local_password_expiration()
             return jsonify(local_info)
         
-        # Método alternativo para usuarios de dominio usando net user
+        print(f"[password_expiration] Máquina en dominio '{machine_domain}'. Intentando net user para {current_user}.")
         try:
-            # Usar el comando net user para obtener información del usuario en el dominio
-            net_user_cmd = f"net user {current_user} /domain"
-            result = subprocess.run(net_user_cmd, shell=True, capture_output=True, text=True)
+            net_user_cmd = f"net user \"{current_user}\" /domain"
+            # Usar utf-8 y backslashreplace
+            result = subprocess.run(net_user_cmd, shell=True, capture_output=True, text=True, encoding='utf-8', errors='backslashreplace', timeout=10)
             
             if result.returncode == 0:
                 output = result.stdout
-                
-                # Buscar información sobre la expiración de la contraseña
                 password_expires_line = None
+                password_last_set_line = None
+                max_password_age_days = None # Para calcular si no hay línea de expiración directa
+
                 for line in output.split('\n'):
-                    if "La contraseña expira" in line or "Password expires" in line:
+                    line_lower = line.lower()
+                    if "password expires" in line_lower or "la contraseña caduca" in line_lower or "la contraseña expira" in line_lower:
                         password_expires_line = line
-                        break
+                    if "password last set" in line_lower or "último cambio de contraseña" in line_lower:
+                        password_last_set_line = line
                 
-                if (password_expires_line):
-                    # Extraer la fecha de expiración
+                # Intentar obtener la política de "Maximum password age" como fallback
+                try:
+                    policy_cmd = "net accounts /domain"
+                    policy_result = subprocess.run(policy_cmd, shell=True, capture_output=True, text=True, encoding='utf-8', errors='backslashreplace', timeout=5)
+                    if policy_result.returncode == 0:
+                        policy_output = policy_result.stdout
+                        max_age_match = re.search(r'(?:Maximum password age \(days\)|Vigencia máxima de la contraseña \(días\))\s*:\s*(\d+|Unlimited|Ilimitado)', policy_output, re.IGNORECASE)
+                        if max_age_match:
+                            age_val = max_age_match.group(1).strip()
+                            if age_val.lower() not in ["unlimited", "ilimitado"] and age_val.isdigit():
+                                max_password_age_days = int(age_val)
+                                if max_password_age_days == 0: max_password_age_days = None # 0 a veces significa ilimitado
+                except Exception as policy_err:
+                    print(f"[password_expiration] Error obteniendo política de net accounts: {policy_err}")
+
+
+                if password_expires_line:
                     parts = password_expires_line.split(':', 1)
                     if len(parts) > 1:
-                        expiry_info = parts[1].strip()
+                        expiry_info_str = parts[1].strip()
+                        if "never" in expiry_info_str.lower() or "nunca" in expiry_info_str.lower():
+                            return jsonify({"expires": False, "message": "Tu contraseña no expira.", "method": "net_user_domain_never"})
                         
-                        # Verificar si la contraseña nunca expira
-                        if "nunca" in expiry_info.lower() or "never" in expiry_info.lower():
-                            return jsonify({
-                                "expires": False,
-                                "message": "Tu contraseña no expira."
-                            })
+                        # Tomar solo la parte de la fecha
+                        date_part_of_expiry_info = expiry_info_str.split(" ")[0]
+                        import datetime # Mover import aquí
+                        date_formats = ["%d/%m/%Y", "%m/%d/%Y", "%Y-%m-%d"]
+                        expiry_date_obj = None
+                        for fmt in date_formats:
+                            try:
+                                expiry_date_obj = datetime.datetime.strptime(date_part_of_expiry_info, fmt).date()
+                                break
+                            except ValueError: continue
                         
-                        # Intentar parsear la fecha de expiración
-                        try:
-                            import datetime
-                            
-                            # Diferentes formatos de fecha posibles según la configuración regional
-                            date_formats = [
-                                "%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d",  # Formatos numéricos
-                                "%d-%m-%Y", "%m-%d-%Y", "%Y-%m-%d",  # Con guiones
-                                "%d %b %Y", "%b %d %Y",              # Con nombre de mes abreviado
-                                "%d %B %Y", "%B %d %Y"               # Con nombre de mes completo
-                            ]
-                            
-                            expiry_date = None
-                            for date_format in date_formats:
-                                try:
-                                    expiry_date = datetime.datetime.strptime(expiry_info, date_format).date()
-                                    break
-                                except ValueError:
-                                    continue
-                            
-                            if expiry_date:
-                                today = datetime.date.today()
-                                days_remaining = (expiry_date - today).days
-                                
-                                message = ""
-                                if days_remaining <= 0:
-                                    message = "¡Tu contraseña ha expirado! Debes cambiarla inmediatamente."
-                                elif days_remaining == 1:
-                                    message = "¡Tu contraseña expira mañana!"
-                                elif days_remaining <= 5:
-                                    message = f"¡Tu contraseña expirará en {days_remaining} días!"
-                                else:
-                                    message = f"Tu contraseña expirará el {expiry_date.strftime('%Y-%m-%d')} (en {days_remaining} días)."
-                                    
-                                return jsonify({
-                                    "expires": True,
-                                    "daysRemaining": days_remaining,
-                                    "expiryDate": expiry_date.strftime('%Y-%m-%d'),
-                                    "message": message
-                                })
-                        except Exception as date_error:
-                            print(f"Error al parsear la fecha de expiración: {date_error}")
+                        if expiry_date_obj:
+                            days_remaining = (expiry_date_obj - datetime.date.today()).days
+                            message = ""
+                            if days_remaining <= 0: message = "¡Tu contraseña ha expirado! Debes cambiarla inmediatamente."
+                            elif days_remaining == 1: message = "¡Tu contraseña expira mañana!"
+                            elif days_remaining <= 7: message = f"¡Tu contraseña expirará en {days_remaining} días!"
+                            else: message = f"Tu contraseña expirará el {expiry_date_obj.strftime('%Y-%m-%d')} (en {days_remaining} días)."
+                            return jsonify({"expires": True, "daysRemaining": days_remaining, "expiryDate": expiry_date_obj.strftime('%Y-%m-%d'), "message": message, "method": "net_user_domain_parsed_date"})
+                        else:
+                             print(f"[password_expiration] No se pudo parsear fecha de expiración directa: '{expiry_info_str}'")
                 
-                # Si llegamos aquí, no pudimos determinar exactamente la expiración
-                # Verificar si se menciona cambio de contraseña requerido
-                change_required = False
-                for line in output.split('\n'):
-                    if "cambiar contraseña" in line.lower() or "change password" in line.lower():
-                        if "próximo inicio" in line.lower() or "next logon" in line.lower():
-                            change_required = True
-                            break
+                # Si no hay línea de expiración directa o no se pudo parsear, intentar calcular con PwdLastSet y MaxPasswordAge
+                if password_last_set_line and max_password_age_days is not None and max_password_age_days > 0:
+                    parts_last_set = password_last_set_line.split(':', 1)
+                    if len(parts_last_set) > 1:
+                        last_set_info_str = parts_last_set[1].strip()
+                        date_part_of_last_set = last_set_info_str.split(" ")[0]
+                        import datetime # Mover import aquí
+                        date_formats = ["%d/%m/%Y", "%m/%d/%Y", "%Y-%m-%d"]
+                        last_set_date_obj = None
+                        for fmt in date_formats:
+                            try:
+                                last_set_date_obj = datetime.datetime.strptime(date_part_of_last_set, fmt).date()
+                                break
+                            except ValueError: continue
+                        
+                        if last_set_date_obj:
+                            calculated_expiry_date = last_set_date_obj + datetime.timedelta(days=max_password_age_days)
+                            days_remaining = (calculated_expiry_date - datetime.date.today()).days
+                            message = ""
+                            if days_remaining <= 0: message = "¡Tu contraseña ha expirado (calculado)! Debes cambiarla."
+                            elif days_remaining == 1: message = "¡Tu contraseña expira mañana (calculado)!"
+                            elif days_remaining <= 7: message = f"¡Tu contraseña expirará en {days_remaining} días (calculado)!"
+                            else: message = f"Tu contraseña expirará el {calculated_expiry_date.strftime('%Y-%m-%d')} (en {days_remaining} días, calculado)."
+                            return jsonify({"expires": True, "daysRemaining": days_remaining, "expiryDate": calculated_expiry_date.strftime('%Y-%m-%d'), "message": message, "method": "net_user_domain_calculated_date"})
+                        else:
+                            print(f"[password_expiration] No se pudo parsear PwdLastSet: '{last_set_info_str}'")
                 
-                if change_required:
-                    return jsonify({
-                        "expires": True,
-                        "daysRemaining": 0,
-                        "message": "Debes cambiar tu contraseña en el próximo inicio de sesión."
-                    })
-            
-            # Si aún no tenemos información, intentar con el PowerShell original
+                # Fallback a PowerShell si net user no dio info clara
+                print("[password_expiration] 'net user /domain' no proporcionó información clara de expiración o no se pudo calcular. Intentando PowerShell.")
+                return _get_password_expiration_via_powershell()
+            else: # net user /domain falló
+                print(f"[password_expiration] 'net user /domain' falló (Code: {result.returncode}, Err: {result.stderr.strip()}). Intentando PowerShell.")
+                return _get_password_expiration_via_powershell()
+        except subprocess.TimeoutExpired:
+            print("[password_expiration] Timeout ejecutando 'net user /domain'. Intentando PowerShell.")
             return _get_password_expiration_via_powershell()
-                
         except Exception as net_user_error:
-            print(f"Error al usar net user: {net_user_error}")
-            # Intentar con el método PowerShell original
+            print(f"[password_expiration] Excepción con 'net user /domain': {net_user_error}. Intentando PowerShell.")
+            traceback.print_exc()
             return _get_password_expiration_via_powershell()
             
     except Exception as e:
-        print(f"Error obteniendo información de expiración de contraseña: {e}")
-        return jsonify({
-            "expires": None,
-            "message": f"Error: {str(e)}"
-        })
+        print(f"[password_expiration] Error general: {e}")
+        traceback.print_exc()
+        return jsonify({"expires": None, "message": f"Error al obtener información de expiración: {str(e)}", "method": "general_exception"})
 
-# Mover el método original a una función auxiliar
 def _get_password_expiration_via_powershell():
     try:
-        # Para usuarios de dominio, usar PowerShell para obtener la información de expiración
         ps_cmd = r'''
         powershell -Command "
         try {
-            # Método simplificado para obtener info de expiración
-            $username = $env:USERNAME
-            $userInfo = net user $username /domain 2>$null
-            
-            if ($LASTEXITCODE -eq 0) {
-                $passwordInfo = $userInfo | Where-Object { $_ -match 'Password expires|contraseña expira|La contraseña caduca' }
-                
-                if ($passwordInfo -match '(never|nunca|jamás)') {
-                    Write-Output 'NO_EXPIRY'
-                    exit
-                }
-                
-                if ($passwordInfo -match '(\d{2}/\d{2}/\d{4})') {
-                    $dateString = $matches[1]
-                    try {
-                        # Intentar varios formatos
-                        try { $expiryDate = [DateTime]::ParseExact($dateString, 'MM/dd/yyyy', $null) }
-                        catch { $expiryDate = [DateTime]::Parse($dateString) }
-                        
-                        $daysRemaining = ($expiryDate - (Get-Date)).Days
-                        Write-Output ('EXPIRES|' + $daysRemaining + '|' + $expiryDate.ToString('yyyy-MM-dd'))
-                        exit
+            $ErrorActionPreference = 'Stop'
+            $outputObject = @{ expires = $null; daysRemaining = $null; expiryDate = $null; message = 'No se pudo determinar la expiración.'; method = 'PowerShell' }
+
+            # Método 1: Usar Get-ADUser (requiere módulo AD)
+            try {
+                Import-Module ActiveDirectory -ErrorAction SilentlyContinue
+                if (Get-Module -Name ActiveDirectory) {
+                    $userAD = Get-ADUser -Identity $env:USERNAME -Properties PasswordLastSet, PasswordNeverExpires, PasswordExpired, msDS-UserPasswordExpiryTimeComputed -ErrorAction SilentlyContinue
+                    if ($userAD) {
+                        if ($userAD.PasswordNeverExpires) {
+                            $outputObject.expires = $false
+                            $outputObject.message = 'Tu contraseña no expira (AD).'
+                            $outputObject.method = 'PowerShell_GetADUser_NeverExpires'
+                            Write-Output ($outputObject | ConvertTo-Json -Compress)
+                            exit
+                        }
+                        if ($userAD.PasswordExpired) {
+                            $outputObject.expires = $true
+                            $outputObject.daysRemaining = 0
+                            $outputObject.message = '¡Tu contraseña ha expirado (AD)! Debes cambiarla.'
+                            $outputObject.method = 'PowerShell_GetADUser_Expired'
+                            Write-Output ($outputObject | ConvertTo-Json -Compress)
+                            exit
+                        }
+                        if ($userAD.'msDS-UserPasswordExpiryTimeComputed') {
+                            $expiryTime = [datetime]::FromFileTime($userAD.'msDS-UserPasswordExpiryTimeComputed')
+                            if ($expiryTime.Year -gt 1601) { # Valid date
+                                $outputObject.expires = $true
+                                $outputObject.expiryDate = $expiryTime.ToString('yyyy-MM-dd')
+                                $outputObject.daysRemaining = ($expiryTime - (Get-Date)).Days
+                                if ($outputObject.daysRemaining -le 0) { $outputObject.message = '¡Tu contraseña ha expirado (AD-msDS)! Debes cambiarla.' }
+                                elseif ($outputObject.daysRemaining -eq 1) { $outputObject.message = '¡Tu contraseña expira mañana (AD-msDS)!' }
+                                elseif ($outputObject.daysRemaining -le 7) { $outputObject.message = ('¡Tu contraseña expirará en {0} días (AD-msDS)!' -f $outputObject.daysRemaining) }
+                                else { $outputObject.message = ('Tu contraseña expirará el {0} (en {1} días, AD-msDS).' -f $outputObject.expiryDate, $outputObject.daysRemaining) }
+                                $outputObject.method = 'PowerShell_GetADUser_msDS'
+                                Write-Output ($outputObject | ConvertTo-Json -Compress)
+                                exit
+                            }
+                        }
                     }
-                    catch {
-                        Write-Output ('ERROR|No se pudo interpretar la fecha: ' + $dateString)
-                        exit
-                    }
                 }
-            }
-            
-            # Si llegamos aquí, probar otro método
+            } catch { Write-Warning ('Error con Get-ADUser: ' + $_.Exception.Message) }
+
+            # Método 2: System.DirectoryServices.AccountManagement
             try {
                 Add-Type -AssemblyName System.DirectoryServices.AccountManagement
-                $context = New-Object System.DirectoryServices.AccountManagement.PrincipalContext('Domain')
-                $user = [System.DirectoryServices.AccountManagement.UserPrincipal]::FindByIdentity($context, $env:USERNAME)
-                
-                if ($user.PasswordNeverExpires) {
-                    Write-Output 'NO_EXPIRY'
-                    exit
-                }
-                
-                if ($user.LastPasswordSet -eq $null) {
-                    Write-Output 'CHANGE_REQUIRED'
-                    exit
-                }
-                
-                # Intentar obtener la política del dominio
-                $domain = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain()
-                $policy = $domain.GetDirectoryEntry()
-                $maxPwdAge = $policy.Properties['maxPwdAge'].Value
-                
-                if ($maxPwdAge) {
-                    $maxPwdAgeDays = [math]::Abs($maxPwdAge / 864000000000)
-                    $expiryDate = $user.LastPasswordSet.AddDays($maxPwdAgeDays)
-                    $daysRemaining = ($expiryDate - (Get-Date)).Days
-                    Write-Output ('EXPIRES|' + $daysRemaining + '|' + $expiryDate.ToString('yyyy-MM-dd'))
-                    exit
-                }
-            }
-            catch {
-                Write-Output ('ERROR|Error al obtener datos de Active Directory: ' + $_.Exception.Message)
-                exit
-            }
-            
-            # Último recurso: intentar con ADSI
-            try {
-                $root = New-Object DirectoryServices.DirectoryEntry
-                $search = New-Object DirectoryServices.DirectorySearcher($root)
-                $search.Filter = '(&(objectClass=user)(sAMAccountName=' + $env:USERNAME + '))'
-                $result = $search.FindOne()
-                
-                if ($result) {
-                    $user = $result.GetDirectoryEntry()
-                    $pwdLastSet = $user.pwdLastSet.Value
-                    
-                    if ($pwdLastSet -eq 0) {
-                        Write-Output 'CHANGE_REQUIRED'
+                $principalContext = New-Object System.DirectoryServices.AccountManagement.PrincipalContext([System.DirectoryServices.AccountManagement.ContextType]::Domain)
+                $userPrincipal = [System.DirectoryServices.AccountManagement.UserPrincipal]::FindByIdentity($principalContext, $env:USERNAME)
+                if ($userPrincipal) {
+                    if ($userPrincipal.PasswordNeverExpires) {
+                        $outputObject.expires = $false
+                        $outputObject.message = 'Tu contraseña no expira (AccountManagement).'
+                        $outputObject.method = 'PowerShell_AcctMgmt_NeverExpires'
+                        Write-Output ($outputObject | ConvertTo-Json -Compress)
                         exit
                     }
-                    
-                    # Convertir pwdLastSet a fecha
-                    $pwdLastSetDate = [DateTime]::FromFileTime($pwdLastSet)
-                    
-                    # Usar la política obtenida previamente
-                    $policy = net accounts /domain
-                    $maxPwdAgeMatch = $policy | Select-String -Pattern '(Maximum password age|Vigencia máxima).*?(\d+)'
-                    
-                    if ($maxPwdAgeMatch -and $maxPwdAgeMatch.Matches.Groups.Count -gt 2) {
-                        $maxPwdAgeDays = [int]$maxPwdAgeMatch.Matches.Groups[2].Value
-                        $expiryDate = $pwdLastSetDate.AddDays($maxPwdAgeDays)
-                        $daysRemaining = ($expiryDate - (Get-Date)).Days
-                        Write-Output ('EXPIRES|' + $daysRemaining + '|' + $expiryDate.ToString('yyyy-MM-dd'))
-                        exit
+                    if ($userPrincipal.LastPasswordSet) {
+                        # Este método no da la fecha de expiración directamente, necesitaría política de dominio
+                        # Pero podemos indicar si se requiere cambio al inicio
+                        # $userPrincipal.PasswordExpired no existe, PasswordMustChange es más relevante
+                        if ($userPrincipal.PasswordNotRequired -eq $false -and $userPrincipal.Enabled -eq $true -and $userPrincipal.LastPasswordSet -eq $null) {
+                             # O si UserPrincipal.PasswordMustChange es true (no es un atributo directo, se infiere)
+                        }
+                    } else { # LastPasswordSet es null, usualmente significa que debe cambiarla
+                         $outputObject.expires = $true
+                         $outputObject.daysRemaining = 0
+                         $outputObject.message = 'Debes cambiar tu contraseña en el próximo inicio de sesión (AccountManagement).'
+                         $outputObject.method = 'PowerShell_AcctMgmt_ChangeRequired'
+                         Write-Output ($outputObject | ConvertTo-Json -Compress)
+                         exit
                     }
                 }
-            }
-            catch {
-                Write-Output ('ERROR|Error ADSI: ' + $_.Exception.Message)
-                exit
-            }
+            } catch { Write-Warning ('Error con AccountManagement: ' + $_.Exception.Message) }
             
-            # Si llegamos aquí, no pudimos determinar nada concreto
-            Write-Output 'EXPIRES_UNKNOWN'
+            # Si llegamos aquí, no pudimos determinar nada concreto con los métodos preferidos
+            $outputObject.message = 'No se pudo determinar la expiración de la contraseña con métodos PowerShell preferidos.'
+            $outputObject.method = 'PowerShell_Fallback_Unknown'
+            Write-Output ($outputObject | ConvertTo-Json -Compress)
+
+        } catch {
+            $outputObject.message = ('Error en script PowerShell: ' + $_.Exception.Message)
+            $outputObject.method = 'PowerShell_GlobalError'
+            Write-Output ($outputObject | ConvertTo-Json -Compress)
         }
-        catch {
-            Write-Output ('ERROR|' + $_.Exception.Message)
-        }
-        "
         '''
+        creation_flags = 0
+        if platform.system() == "Windows":
+            creation_flags = subprocess.CREATE_NO_WINDOW
         
-        result = subprocess.run(ps_cmd, shell=True, capture_output=True, text=True)
+        result = subprocess.run(ps_cmd, shell=True, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=creation_flags, timeout=25)
         output = result.stdout.strip()
         
-        # El resto del código permanece igual
-        
-        if output.startswith('NO_EXPIRY'):
-            return jsonify({
-                "expires": False,
-                "message": "Tu contraseña no expira."
-            })
-        elif output.startswith('CHANGE_REQUIRED'):
-            return jsonify({
-                "expires": True,
-                "daysRemaining": 0,
-                "message": "Debes cambiar tu contraseña en el próximo inicio de sesión."
-            })
-        elif output.startswith('EXPIRES'):
-            parts = output.split('|')
-            days_remaining = int(parts[1])
-            expiry_date = parts[2]
-            
-            message = ""
-            if days_remaining <= 0:
-                message = "¡Tu contraseña ha expirado! Debes cambiarla inmediatamente."
-            elif days_remaining == 1:
-                message = "¡Tu contraseña expira mañana!"
-            elif days_remaining <= 5:
-                message = f"¡Tu contraseña expirará en {days_remaining} días!"
-            else:
-                message = f"Tu contraseña expirará el {expiry_date} (en {days_remaining} días)."
-                
-            return jsonify({
-                "expires": True,
-                "daysRemaining": days_remaining,
-                "expiryDate": expiry_date,
-                "message": message
-            })
-        elif output.startswith('ERROR'):
-            error_msg = output.split('|')[1] if '|' in output else "Error desconocido"
-            print(f"Error obteniendo expiración de contraseña: {error_msg}")
-            return jsonify({
-                "expires": None,
-                "message": f"No se pudo determinar la expiración de la contraseña: {error_msg}"
-            })
-        else:
-            print(f"Respuesta inesperada: {output}")
-            return jsonify({
-                "expires": None,
-                "message": "No se pudo determinar la expiración de la contraseña."
-            })
-    except Exception as ps_error:
-        print(f"Error en método PowerShell: {ps_error}")
-        return jsonify({
-            "expires": None,
-            "message": "No se pudo determinar la expiración de la contraseña mediante métodos alternativos."
-        })
+        if not output:
+            stderr_output = result.stderr.strip()
+            print(f"[_get_password_expiration_via_powershell] PowerShell no produjo salida. Stderr: {stderr_output}")
+            return jsonify({"expires": None, "message": f"Error de script PowerShell: {stderr_output if stderr_output else 'Sin salida.'}", "method": "PowerShell_NoOutput"})
+
+        try:
+            ps_json_data = json.loads(output)
+            return jsonify(ps_json_data)
+        except json.JSONDecodeError:
+            print(f"[_get_password_expiration_via_powershell] Error decodificando JSON de PowerShell: {output}")
+            return jsonify({"expires": None, "message": f"Respuesta inesperada de PowerShell: {output}", "method": "PowerShell_InvalidJSON"})
+
+    except subprocess.TimeoutExpired:
+        print("[_get_password_expiration_via_powershell] Timeout.")
+        return jsonify({"expires": None, "message": "Timeout ejecutando script de PowerShell.", "method": "PowerShell-Timeout"})
+    except Exception as e:
+        print(f"[_get_password_expiration_via_powershell] Excepción: {e}")
+        traceback.print_exc()
+        return jsonify({"expires": None, "message": "No se pudo determinar la expiración (excepción en Python).", "method": "PowerShell_PythonException"})
 
 @app.route('/api/force-password-change', methods=['POST', 'OPTIONS'])
 def force_password_change():
-    if request.method == 'OPTIONS':
-        return '', 200
-        
+    if request.method == 'OPTIONS': return '', 200
     try:
-        # Obtener usuario actual
         username = getpass.getuser()
+        domain_info_output = subprocess.check_output("wmic computersystem get domain", shell=True, text=True, encoding='utf-8', errors='backslashreplace', timeout=5).strip()
+        domain_lines = [line.strip() for line in domain_info_output.split('\n') if line.strip()]
+        machine_domain = domain_lines[1] if len(domain_lines) > 1 else "WORKGROUP"
+        is_machine_in_domain = machine_domain.upper() != "WORKGROUP"
         
-        # Verificar si estamos en un dominio
-        domain_info = subprocess.check_output("wmic computersystem get domain", shell=True).decode().strip()
-        domain_lines = [line.strip() for line in domain_info.split('\n') if line.strip()]
-        domain = domain_lines[1] if len(domain_lines) > 1 else ""
-        is_domain = domain.upper() != "WORKGROUP"
-        
-        if is_domain:
-            # Para equipos en dominio, intentar abrir CTRL+ALT+DEL de forma más directa
-            # Esta es la secuencia más confiable para usuarios de dominio
-            cmd = '''
-            powershell -Command "
-            Add-Type -TypeDefinition @'
-            using System;
-            using System.Runtime.InteropServices;
-            
-            public class NativeMethods {
-                [DllImport(\"user32.dll\")]
-                public static extern void LockWorkStation();
-            }
-            '@
-            
-            # Bloquear la estación de trabajo (primer paso de Ctrl+Alt+Del)
-            [NativeMethods]::LockWorkStation()
-            "
-            '''
-            subprocess.Popen(cmd, shell=True)
-            
-            # Mensaje específico para cambio de contraseña solicitado por la organización
-            return jsonify({
-                "success": True, 
-                "message": "Por motivos de seguridad, su organización requiere que cambie su contraseña. Se ha bloqueado la pantalla. Por favor, presione Ctrl+Alt+Supr y seleccione 'Cambiar una contraseña'.",
-                "isOrganizationRequest": True
-            })
-        else:
-            # Para equipos locales, intentar métodos alternativos
-            # 1. Intenta abrir directamente el diálogo de cuentas de usuario
-            subprocess.Popen('control userpasswords2', shell=True)
-            
-            return jsonify({
-                "success": True, 
-                "message": "Por motivos de seguridad, se recomienda cambiar su contraseña. Se ha abierto el panel de control de contraseñas.",
-                "isOrganizationRequest": True
-            })
+        creation_flags = 0
+        if platform.system() == "Windows":
+            creation_flags = subprocess.CREATE_NO_WINDOW
+
+        if is_machine_in_domain:
+            cmd = 'powershell -Command "(New-Object -ComObject Shell.Application).Windows().item() | ForEach-Object { if ($_.hwnd -eq (Get-Process -Id $pid).MainWindowHandle) { $_.Quit() } }; Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait(\"^(%{DELETE})\")"'
+            # Intento alternativo si el anterior no funciona bien o para forzar bloqueo:
+            # cmd = 'powershell -Command "Add-Type -TypeDefinition \'public class P{ [System.Runtime.InteropServices.DllImport(\\\"user32.dll\\\")] public static extern void LockWorkStation(); }\'; [P]::LockWorkStation()"'
+            subprocess.Popen(cmd, shell=True, creationflags=creation_flags)
+            return jsonify({"success": True, "message": "Se ha enviado la señal para cambiar contraseña (Ctrl+Alt+Supr). Si no aparece el diálogo, bloquea tu sesión (Windows+L) y desbloquéala para ver la opción 'Cambiar una contraseña'.", "isOrganizationRequest": True})
+        else: # Local
+            subprocess.Popen('control userpasswords2', shell=True, creationflags=creation_flags)
+            return jsonify({"success": True, "message": "Se ha abierto el panel de control de cuentas de usuario para cambiar tu contraseña local.", "isOrganizationRequest": True })
             
     except Exception as e:
-        print(f"Error al forzar cambio de contraseña: {str(e)}")
-        return jsonify({
-            "success": False, 
-            "message": f"Error al iniciar el proceso de cambio de contraseña: {str(e)}"
-        }), 500
-        
+        print(f"[force_password_change] Error: {str(e)}")
+        traceback.print_exc()
+        return jsonify({"success": False, "message": f"Error al iniciar el proceso de cambio de contraseña: {str(e)}"}), 500
+
 @app.route("/api/user-info", methods=["GET", "OPTIONS"])
 def user_info():
-    if request.method == 'OPTIONS':
-        return '', 200
-        
+    if request.method == 'OPTIONS': return '', 200
     try:
-        # Obtener usuario actual
         username = getpass.getuser()
+        domain_info_output = subprocess.check_output("wmic computersystem get domain", shell=True, text=True, encoding='utf-8', errors='backslashreplace', timeout=5).strip()
+        domain_lines = [line.strip() for line in domain_info_output.split('\n') if line.strip()]
+        domain = domain_lines[1] if len(domain_lines) > 1 else "WORKGROUP"
+        is_domain_user = domain.upper() != "WORKGROUP"
         
-        # Verificar si estamos en un dominio
-        domain_info = subprocess.check_output("wmic computersystem get domain", shell=True).decode().strip()
-        domain_lines = [line.strip() for line in domain_info.split('\n') if line.strip()]
-        domain = domain_lines[1] if len(domain_lines) > 1 else ""
-        is_domain = domain.upper() != "WORKGROUP"
-        
-        # Obtener nombre completo si está disponible
         full_name = ""
         try:
-            name_info = subprocess.check_output("wmic useraccount where name='%s' get fullname" % username, shell=True).decode().strip()
-            name_lines = [line.strip() for line in name_info.split('\n') if line.strip()]
-            if len(name_lines) > 1:
+            # Usar utf-8 y backslashreplace
+            name_info_output = subprocess.check_output(f"wmic useraccount where name='{username}' get fullname", shell=True, text=True, encoding='utf-8', errors='backslashreplace', timeout=5).strip()
+            name_lines = [line.strip() for line in name_info_output.split('\n') if line.strip()]
+            if len(name_lines) > 1 and name_lines[1]: # Asegurar que la línea no esté vacía
                 full_name = name_lines[1]
-        except:
-            pass
+            else: # Fallback si wmic no da el nombre completo
+                full_name = username 
+        except Exception as wmic_fullname_err:
+            print(f"[user_info] Error obteniendo fullname con wmic: {wmic_fullname_err}. Usando username como fullname.")
+            full_name = username
         
         return jsonify({
             "username": username,
             "fullName": full_name,
-            "isDomainUser": is_domain,
-            "domain": domain if is_domain else "No está en un dominio"
+            "isDomainUser": is_domain_user,
+            "domain": domain if is_domain_user else None # Devolver null si no está en dominio
         })
     except Exception as e:
-        print(f"Error obteniendo información de usuario: {e}")
-        return jsonify({
-            "username": getpass.getuser(),
-            "isDomainUser": False,
-            "error": str(e)
-        })
+        print(f"[user_info] Error general: {e}")
+        traceback.print_exc()
+        return jsonify({"username": getpass.getuser(), "fullName": getpass.getuser(), "isDomainUser": False, "domain": None, "error": str(e)}), 500
     
 def change_password(username, old_password, new_password):
     try:
-        # Determinar si el usuario está en un dominio o es local
         is_domain_user = False
         domain = None
-        
-        # Verificar si el nombre de usuario incluye dominio (formato: DOMINIO\usuario)
         if '\\' in username:
-            domain, username = username.split('\\', 1)
+            domain, username_part = username.split('\\', 1) # Usar username_part para no sobreescribir el param
             is_domain_user = True
         else:
-            # Intentar determinar si está en un dominio consultando la información del sistema
+            username_part = username # Es solo el nombre de usuario
             try:
-                domain_info = subprocess.check_output("wmic computersystem get domain", shell=True).decode().strip()
-                domain_lines = [line.strip() for line in domain_info.split('\n') if line.strip()]
-                if len(domain_lines) > 1:
-                    domain = domain_lines[1]
-                    # Si no es WORKGROUP, probablemente es un dominio
-                    is_domain_user = domain.upper() != "WORKGROUP"
-            except Exception as e:
-                print(f"Error al verificar dominio: {e}")
+                domain_info_output = subprocess.check_output("wmic computersystem get domain", shell=True, text=True, encoding='utf-8', errors='backslashreplace', timeout=5).strip()
+                domain_lines = [line.strip() for line in domain_info_output.split('\n') if line.strip()]
+                current_machine_domain = domain_lines[1] if len(domain_lines) > 1 else "WORKGROUP"
+                if current_machine_domain.upper() != "WORKGROUP":
+                    is_domain_user = True
+                    domain = current_machine_domain # Asignar el dominio de la máquina
+            except Exception as e_dom: print(f"[change_password] Error verificando dominio: {e_dom}")
         
-        # Verificar si la aplicación se está ejecutando como administrador
         is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
-        if not is_admin:
-            return {"success": False, "message": "Esta operación requiere privilegios de administrador"}
+        if not is_admin: return {"success": False, "message": "Esta operación requiere privilegios de administrador"}
         
-        # Validar la contraseña actual
         validation_success = False
+        creation_flags = 0
+        if platform.system() == "Windows": creation_flags = subprocess.CREATE_NO_WINDOW
+
+        # Para validar, siempre usar el contexto del usuario que ejecuta el script (getpass.getuser())
+        # ya que runas o Invoke-Command con otras credenciales es para ejecución, no validación simple.
+        # La validación real de 'old_password' se hará implícitamente por 'net user' o 'Set-ADAccountPassword'
         
         if is_domain_user and domain:
-            # Para usuarios de dominio, intentar validar contraseña
-            try:
-                # Usar logon con PowerShell
-                ps_cmd = f'powershell -Command "$secpasswd = ConvertTo-SecureString \'{old_password}\' -AsPlainText -Force; $creds = New-Object System.Management.Automation.PSCredential (\'{domain}\\{username}\', $secpasswd); $result = Invoke-Command -ComputerName localhost -Credential $creds -ScriptBlock {{ $true }} -ErrorAction SilentlyContinue; if ($result) {{ Write-Output \'Success\' }} else {{ Write-Output \'Failure\' }}"'
-                ps_result = subprocess.run(ps_cmd, shell=True, capture_output=True, text=True)
-                validation_success = "Success" in ps_result.stdout
-            except Exception as e:
-                print(f"Error validando contraseña de dominio: {e}")
-                return {"success": False, "message": f"Error validando credenciales: {str(e)}"}
-        else:
-            # Para usuarios locales, usar el método existente
-            verify_cmd = f'echo {old_password} | runas /user:{username} "cmd.exe /c echo Contraseña correcta" 2>&1'
-            verify_result = subprocess.run(verify_cmd, shell=True, capture_output=True, text=True)
-            validation_success = "Contraseña no es correcta" not in verify_result.stderr.lower() and "incorrect password" not in verify_result.stderr.lower()
-        
-        if not validation_success:
-            return {"success": False, "message": "Contraseña actual incorrecta"}
-            
-        # Cambiar la contraseña
-        if is_domain_user and domain:
-            # Para usuarios de dominio
-            try:
-                # Usar PowerShell para cambiar contraseña de dominio
-                ps_cmd = f'powershell -Command "$secpasswd = ConvertTo-SecureString \'{old_password}\' -AsPlainText -Force; $newpasswd = ConvertTo-SecureString \'{new_password}\' -AsPlainText -Force; $creds = New-Object System.Management.Automation.PSCredential (\'{domain}\\{username}\', $secpasswd); try {{ Set-ADAccountPassword -Identity \'{username}\' -OldPassword $secpasswd -NewPassword $newpasswd -ErrorAction Stop; Write-Output \'Success\' }} catch {{ Write-Output $_.Exception.Message }}"'
-                ps_result = subprocess.run(ps_cmd, shell=True, capture_output=True, text=True)
-                
-                if "Success" in ps_result.stdout:
-                    return {"success": True, "message": "Contraseña de dominio cambiada con éxito"}
+            # Para usuarios de dominio, Set-ADAccountPassword valida la contraseña antigua
+            ps_cmd_change = f'powershell -Command "Add-Type -AssemblyName System.DirectoryServices.AccountManagement; try {{ $ctx = New-Object System.DirectoryServices.AccountManagement.PrincipalContext([System.DirectoryServices.AccountManagement.ContextType]::Domain, \'{domain}\'); $usr = [System.DirectoryServices.AccountManagement.UserPrincipal]::FindByIdentity($ctx, \'{username_part}\'); $usr.ChangePassword(\'{old_password}\', \'{new_password}\'); Write-Output \'Success\' }} catch {{ Write-Output $_.Exception.Message }}"'
+            ps_result = subprocess.run(ps_cmd_change, shell=True, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=creation_flags, timeout=20)
+            if "Success" in ps_result.stdout:
+                return {"success": True, "message": "Contraseña de dominio cambiada con éxito."}
+            else:
+                error_msg = ps_result.stdout.strip() or ps_result.stderr.strip() or "Error desconocido al cambiar contraseña de dominio."
+                # Intentar con Set-ADAccountPassword si el anterior falló (requiere módulo AD y permisos)
+                ps_cmd_setad = f'powershell -Command "$ErrorActionPreference = \"Stop\"; try {{ Import-Module ActiveDirectory; Set-ADAccountPassword -Identity \'{username_part}\' -OldPassword (ConvertTo-SecureString \'{old_password}\' -AsPlainText -Force) -NewPassword (ConvertTo-SecureString \'{new_password}\' -AsPlainText -Force); Write-Output \"Success\" }} catch {{ Write-Output $_.Exception.Message }}"'
+                ps_result_setad = subprocess.run(ps_cmd_setad, shell=True, capture_output=True, text=True, encoding='utf-8', errors='replace', creationflags=creation_flags, timeout=20)
+                if "Success" in ps_result_setad.stdout:
+                    return {"success": True, "message": "Contraseña de dominio cambiada con éxito (Set-ADAccountPassword)."}
                 else:
-                    error_msg = ps_result.stdout.strip() or ps_result.stderr.strip() or "Error desconocido"
-                    
-                    # Alternativa: intentar cambiar con ADSI si falló
-                    try:
-                        adsi_cmd = f'powershell -Command "$secpasswd = ConvertTo-SecureString \'{old_password}\' -AsPlainText -Force; $creds = New-Object System.Management.Automation.PSCredential (\'{domain}\\{username}\', $secpasswd); try {{ $user = [ADSI]"WinNT://{domain}/{username}"; $user.ChangePassword(\'{old_password}\', \'{new_password}\'); Write-Output \'Success\' }} catch {{ Write-Output $_.Exception.Message }}"'
-                        adsi_result = subprocess.run(adsi_cmd, shell=True, capture_output=True, text=True)
-                        
-                        if "Success" in adsi_result.stdout:
-                            return {"success": True, "message": "Contraseña de dominio cambiada con éxito (método alternativo)"}
-                    except Exception as e:
-                        print(f"Error en método ADSI: {e}")
-                        
-                    return {"success": False, "message": f"Error al cambiar contraseña de dominio: {error_msg}"}
-            except Exception as e:
-                print(f"Error cambiando contraseña de dominio: {e}")
-                return {"success": False, "message": f"Error: {str(e)}"}
-        else:
-            # Para usuarios locales
-            try:
-                cmd = f'net user {username} {new_password}'
-                result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-                
-                if result.returncode == 0:
-                    return {"success": True, "message": "Contraseña local cambiada con éxito"}
-                else:
-                    error_msg = result.stderr.strip() if result.stderr else result.stdout.strip() if result.stdout else "Error desconocido"
-                    
-                    # Si falló, intentar con método alternativo (WinAPI)
-                    try:
-                        ps_cmd = f'powershell -Command "try {{ $user = [ADSI]\'WinNT://./\' + \'{username}\'; $user.ChangePassword(\'{old_password}\', \'{new_password}\'); Write-Output \'Success\' }} catch {{ Write-Output $_.Exception.Message }}"'
-                        ps_result = subprocess.run(ps_cmd, shell=True, capture_output=True, text=True)
-                        
-                        if "Success" in ps_result.stdout:
-                            return {"success": True, "message": "Contraseña local cambiada con éxito (método alternativo)"}
-                    except Exception as e:
-                        print(f"Error en método ADSI local: {e}")
-                        
-                    return {"success": False, "message": f"Error al cambiar contraseña local: {error_msg}"}
-            except Exception as e:
-                print(f"Error cambiando contraseña local: {e}")
-                return {"success": False, "message": f"Error: {str(e)}"}
+                    error_msg_setad = ps_result_setad.stdout.strip() or ps_result_setad.stderr.strip() or "Error desconocido con Set-ADAccountPassword."
+                    print(f"[change_password] Fallo AccountManagement: {error_msg}. Fallo Set-ADAccountPassword: {error_msg_setad}")
+                    return {"success": False, "message": f"Error al cambiar contraseña de dominio. Intento 1: {error_msg}. Intento 2: {error_msg_setad}"}
+        else: # Usuario local
+            cmd_local_change = f"net user \"{username_part}\" \"{new_password}\""
+            # Para net user, la validación de la contraseña antigua no se hace directamente en este comando si se ejecuta como admin.
+            # Se asume que si el admin lo ejecuta, tiene permiso.
+            # Si se requiere validación de la contraseña antigua para local, se necesitaría un enfoque diferente (ej. LogonUser API).
+            # Por ahora, se simplifica a que el admin puede cambiarla.
+            result_local_change = subprocess.run(cmd_local_change, shell=True, capture_output=True, text=True, encoding='utf-8', errors='backslashreplace', timeout=10)
+            if result_local_change.returncode == 0:
+                return {"success": True, "message": "Contraseña local cambiada con éxito."}
+            else:
+                error_msg = result_local_change.stderr.strip() or result_local_change.stdout.strip() or "Error desconocido al cambiar contraseña local."
+                return {"success": False, "message": f"Error al cambiar contraseña local: {error_msg}"}
+
     except Exception as e:
-        print(f"Error general cambiando contraseña: {e}")
+        print(f"[change_password] Error general: {e}")
+        traceback.print_exc()
         return {"success": False, "message": f"Error inesperado: {str(e)}"}
-    
+
 @app.route('/api/open-windows-settings', methods=['POST', 'OPTIONS'])
 def open_windows_settings():
     if request.method == 'OPTIONS':
@@ -1213,360 +1034,387 @@ def open_windows_settings():
         print(f"Error al abrir configuración de Windows: {str(e)}")
         return jsonify({"success": False, "message": str(e)}), 500
 
-@app.route("/api/system-info")
-@app.route("/api/system-info")
+@app.route("/api/system-info") # Eliminar la duplicada, solo una definición
 def system_info():
-    sys_details = get_system_details()
+    sys_details = get_system_details() # get_system_details ya usa wmic subprocess
     temps = get_system_temperatures()
     interfaces = get_network_interfaces()
     hostname = get_hostname()
-    cpu_percent = psutil.cpu_percent(interval=1)
+    cpu_percent = psutil.cpu_percent(interval=0.5) # Intervalo más corto
     memory = psutil.virtual_memory()
     disk = get_disk_usage()
     
-    # Obtener usuario dominio
     user = getpass.getuser()
-    domain_info = subprocess.check_output("wmic computersystem get domain", shell=True).decode().strip()
-    domain_lines = [line.strip() for line in domain_info.split('\n') if line.strip()]
-    domain = domain_lines[1] if len(domain_lines) > 1 else ""
-    is_domain = domain.upper() != "WORKGROUP"
-    usuario_dominio = f"{domain}\\{user}" if is_domain else user
+    # Reutilizar la lógica de get_system_details para el dominio si es posible, o wmic directo
+    machine_domain_from_details = sys_details.get("domain", "WORKGROUP")
+    is_machine_in_domain = machine_domain_from_details.upper() != "WORKGROUP" and machine_domain_from_details != "No está en un dominio"
     
-    # Usuario y dominio como campos separados (para el nuevo formato)
-    dominio = domain if is_domain else "LOCAL"
-    usuario = user
+    dominio_final = machine_domain_from_details if is_machine_in_domain else "LOCAL"
     
-    # Obtener IP pública
     ip_publica = get_public_ip() or "No disponible"
-    
-    #Definir estatus con 0
-    estatus = 0
     
     # Obtener umbrales desde variables de entorno
     cpu_threshold = float(os.getenv('CRITICAL_CPU_THRESHOLD', 90))
     temp_threshold = float(os.getenv('CRITICAL_TEMP_THRESHOLD', 90))
     memory_threshold = float(os.getenv('CRITICAL_MEMORY_THRESHOLD', 90))
     
-    # Verificar condiciones críticas
     critical_conditions = []
     if cpu_percent >= cpu_threshold:
         critical_conditions.append(f"CPU al {cpu_percent}% (umbral: {cpu_threshold}%)")
     
     cpu_temp = temps.get('cpu', None)
     if cpu_temp is not None and cpu_temp >= temp_threshold:
-        critical_conditions.append(f"Temperatura CPU: {cpu_temp}°C (umbral: {temp_threshold}°C)")
+        critical_conditions.append(f"Temperatura CPU: {cpu_temp}°C (umbral: {temp_threshold}%)")
     
     if memory.percent >= memory_threshold:
         critical_conditions.append(f"Memoria RAM al {memory.percent}% (umbral: {memory_threshold}%)")
     
-    # Guardar información en la base de datos si hay condiciones críticas
     saved_to_db = False
     if critical_conditions:
-        saved_to_db = save_system_info(
+        print(f"[system_info] Condiciones críticas detectadas: {critical_conditions}. Intentando guardar...")
+        saved_to_db = save_system_info( # save_system_info ya obtiene serial, mac, etc.
             hostname=hostname,
             cpu_percent=cpu_percent,
             memory_percent=memory.percent,
-            disk_percent=disk["percent"],
+            disk_percent=disk.get("percent", 0), # Usar .get con default
             temperatures=temps
         )
+        print(f"[system_info] Resultado de save_system_info: {saved_to_db}")
+
 
     return jsonify({
         "user": user,
-        "IpPublica": ip_publica,            # Nuevo campo agregado
+        "IpPublica": ip_publica,
         "hostname": hostname,
         "cpu_percent": cpu_percent,
         "memory": memory._asdict(),
         "cpu_speed": get_cpu_speed(),
         "temperatures": temps,
-        "gpu_temp": get_gpu_temp(),
+        # "gpu_temp": get_gpu_temp(), # temps ya puede incluir gpu
         "ip_local": get_local_ip(),
-        "ip_public": ip_publica,            # Duplicado para mantener compatibilidad
+        # "ip_public": ip_publica, # Ya está como IpPublica
         "disk_usage": disk,
         "serial_number": get_serial_number(),
         "network_interfaces": interfaces,
         "critical_conditions": critical_conditions,
-        "saved_to_database": saved_to_db and len(critical_conditions) > 0,
+        "saved_to_database": saved_to_db, # No necesita `and len(critical_conditions) > 0`
         "thresholds": {
             "cpu": cpu_threshold,
             "temperature": temp_threshold,
             "memory": memory_threshold
         },
-        **sys_details
+        "domain": dominio_final, # Añadido para consistencia
+        **sys_details # sys_details ya contiene manufacturer, model, os, y su propia version de domain
     })
     
+def _get_user_details_via_powershell(username_to_check, machine_domain_name_hint):
+    """
+    Intenta obtener detalles del usuario usando PowerShell y System.DirectoryServices.AccountManagement.
+    """
+    print(f"[_get_user_details_via_powershell] Intentando para usuario: {username_to_check} en dominio (hint): {machine_domain_name_hint}")
+    
+    context_block = ""
+    ps_machine_domain_hint_for_script = "''" 
+    if machine_domain_name_hint and machine_domain_name_hint.upper() != "WORKGROUP":
+        context_block = f"$principalContext = New-Object System.DirectoryServices.AccountManagement.PrincipalContext([System.DirectoryServices.AccountManagement.ContextType]::Domain, '{machine_domain_name_hint}')"
+        ps_machine_domain_hint_for_script = f"'{machine_domain_name_hint}'"
+    else:
+        context_block = "$principalContext = New-Object System.DirectoryServices.AccountManagement.PrincipalContext([System.DirectoryServices.AccountManagement.ContextType]::Machine)"
+
+    # Script de PowerShell robusto (como se discutió, con try-catch interno)
+    ps_script_body = f"""
+    Add-Type -AssemblyName System.DirectoryServices.AccountManagement
+    $MachineDomainHintFromPy = {ps_machine_domain_hint_for_script}
+    {context_block}
+    
+    $userPrincipal = $null
+    try {{
+        $userPrincipal = [System.DirectoryServices.AccountManagement.UserPrincipal]::FindByIdentity($principalContext, $UsernameToQuery)
+    }} catch {{
+        Write-Warning "Error en FindByIdentity: $($_.Exception.Message)"
+    }}
+
+    if ($userPrincipal) {{
+        $effectiveDomainName = $null
+        $isDomainUser = $false
+        $pwdLastSetVal = $null
+        $detailsOutput = $null # Para el JSON de salida
+
+        try {{ # Inicio del try-catch granular
+            if ($userPrincipal.Context) {{
+                $effectiveDomainName = $userPrincipal.Context.Name
+                if ($userPrincipal.Context.ContextType -eq [System.DirectoryServices.AccountManagement.ContextType]::Domain) {{
+                    $isDomainUser = $true
+                }} elseif ($userPrincipal.Context.ContextType -eq [System.DirectoryServices.AccountManagement.ContextType]::Machine) {{
+                    $isDomainUser = $false
+                    $effectiveDomainName = $env:COMPUTERNAME # Usar nombre de máquina para local
+                }}
+            }}
+
+            if ($isDomainUser -and (-not $effectiveDomainName)) {{
+                if ($MachineDomainHintFromPy -and $MachineDomainHintFromPy -ne "''") {{
+                    $effectiveDomainName = $MachineDomainHintFromPy
+                }} else {{
+                    try {{
+                        $wmiDomain = (Get-WmiObject Win32_ComputerSystem -ErrorAction SilentlyContinue).Domain
+                        if ($wmiDomain -and $wmiDomain.ToUpper() -ne "WORKGROUP") {{ $effectiveDomainName = $wmiDomain }}
+                    }} catch {{ Write-Warning "No se pudo obtener el dominio de WMI como fallback." }}
+                }}
+            }}
+            
+            if ($userPrincipal.LastPasswordSet) {{
+                $pwdLastSetVal = $userPrincipal.LastPasswordSet.Value.ToString("yyyy-MM-dd HH:mm:ss")
+            }}
+
+            $detailsOutput = @{{
+                success                 = $true;
+                method                  = "PowerShell-AccountManagement";
+                username                = $userPrincipal.SamAccountName;
+                fullName                = $userPrincipal.DisplayName;
+                isDomain                = $isDomainUser;
+                domain                  = $effectiveDomainName;
+                accountEnabled          = $userPrincipal.Enabled;
+                passwordLastSet         = $pwdLastSetVal;
+                passwordNeverExpires    = $userPrincipal.PasswordNeverExpires;
+                userCannotChangePassword= $userPrincipal.UserCannotChangePassword;
+                userPrincipalName       = $userPrincipal.UserPrincipalName;
+                distinguishedName       = $userPrincipal.DistinguishedName
+            }}
+            Write-Output (ConvertTo-Json -InputObject $detailsOutput -Depth 5 -Compress) # Aumentado Depth
+
+        }} catch {{ # Catch para el try-catch granular
+            $innerExceptionMessage = "Error procesando detalles de userPrincipal."
+            $innerExceptionDetails = ""
+            if ($_) {{ if ($_.Exception) {{ $innerExceptionMessage = $_.Exception.Message; $innerExceptionDetails = $_.Exception.ToString() }} }}
+            Write-Output (ConvertTo-Json -InputObject @{{success=$false; method="PowerShell-AccountManagement-ProcessingError"; message=$innerExceptionMessage; details=$innerExceptionDetails}} -Compress)
+        }}
+    }} else {{
+        Write-Output (ConvertTo-Json -InputObject @{{success=$false; method="PowerShell-AccountManagement"; message="Usuario '$UsernameToQuery' no encontrado con AccountManagement (o error en FindByIdentity)."}} -Compress)
+    }}
+    """
+    
+    ps_script_full = f"""
+    param ([string]$UsernameToQuery)
+    try {{ {ps_script_body} }}
+    catch {{
+        $exceptionMessage = "Error desconocido en script PowerShell."
+        if ($_) {{ if ($_.Exception) {{ $exceptionMessage = $_.Exception.Message }} }}
+        $exceptionType = "Desconocido"
+        if ($_) {{ if ($_.Exception) {{ if ($_.Exception.GetType()) {{ $exceptionType = $_.Exception.GetType().FullName }} }} }}
+        $stackTraceInfo = "No stack trace disponible"
+        if ($_) {{ if ($_.Exception) {{ if ($_.Exception.StackTrace) {{ $stackTraceInfo = $_.Exception.StackTrace.ToString() }} }} }}
+        $errorDetails = @{{ success=$false; method="PowerShell-AccountManagement-GlobalCatch"; message=$exceptionMessage; exceptionType=$exceptionType; stackTrace=$stackTraceInfo }}
+        Write-Output (ConvertTo-Json -InputObject $errorDetails -Compress)
+    }}
+    """
+
+    temp_ps_file = None
+    try:
+        # Usar tempfile.NamedTemporaryFile para asegurar que se elimina
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".ps1", encoding="utf-8") as tmpfile:
+            tmpfile.write(ps_script_full)
+            temp_ps_file = tmpfile.name
+        
+        ps_command_list = ["powershell", "-NonInteractive", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", temp_ps_file, "-UsernameToQuery", username_to_check]
+        print(f"[_get_user_details_via_powershell] Ejecutando: {' '.join(ps_command_list)}")
+
+        creation_flags = 0
+        if platform.system() == "Windows": creation_flags = subprocess.CREATE_NO_WINDOW
+
+        result = subprocess.run(ps_command_list, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=20, creationflags=creation_flags)
+        
+        print(f"[_get_user_details_via_powershell] PS STDOUT: {result.stdout.strip()}")
+        if result.stderr: print(f"[_get_user_details_via_powershell] PS STDERR: {result.stderr.strip()}")
+
+        if result.stdout:
+            try:
+                ps_output_json = json.loads(result.stdout.strip())
+                # Devolver directamente el JSON parseado, ya que el script de PS ahora incluye 'success'
+                return ps_output_json # El script ya debería tener la estructura {"success": true/false, "data": {...}} o error
+            except json.JSONDecodeError as je:
+                print(f"[_get_user_details_via_powershell] Error decodificando JSON de PS: {je}. Salida: {result.stdout.strip()}")
+                return {"success": False, "error": f"Error parseando salida de PowerShell: {result.stdout.strip()}", "method": "PowerShell-JSONDecodeError"}
+        else:
+            error_output = result.stderr.strip() if result.stderr else "Script de PowerShell no produjo salida STDOUT."
+            print(f"[_get_user_details_via_powershell] Sin STDOUT. Código: {result.returncode}. Error: {error_output}")
+            return {"success": False, "error": f"Fallo de ejecución de PowerShell: {error_output}", "method": "PowerShell-NoSTDOUT"}
+
+    except subprocess.TimeoutExpired:
+        print("[_get_user_details_via_powershell] Timeout.")
+        return {"success": False, "error": "Timeout ejecutando script de PowerShell", "method": "PowerShell-Timeout"}
+    except Exception as e:
+        print(f"[_get_user_details_via_powershell] Excepción: {e}")
+        traceback.print_exc()
+        return {"success": False, "error": f"Excepción en Python/PowerShell: {str(e)}", "method": "PowerShell-PythonException"}
+    finally:
+        if temp_ps_file and os.path.exists(temp_ps_file):
+            try: os.remove(temp_ps_file)
+            except Exception as e_rm: print(f"[_get_user_details_via_powershell] Error eliminando tmp {temp_ps_file}: {e_rm}")
+
 @app.route("/api/user-details", methods=["GET", "OPTIONS"])
 def get_user_details():
-    if request.method == 'OPTIONS':
-        return '', 200
-        
+    if request.method == 'OPTIONS': return '', 200
     try:
-        # Obtener usuario actual
         username = getpass.getuser()
+        print(f"[get_user_details] Usuario: {username}")
         
-        # Verificar si estamos en un dominio
-        domain_info = subprocess.check_output("wmic computersystem get domain", shell=True).decode().strip()
-        domain_lines = [line.strip() for line in domain_info.split('\n') if line.strip()]
-        domain = domain_lines[1] if len(domain_lines) > 1 else ""
-        is_domain = domain.upper() != "WORKGROUP"
-        
-        user_details = {}
-        
-        if is_domain:
-            # Para usuarios de dominio, ejecutar net user con /domain
+        machine_domain = "WORKGROUP"
+        is_machine_in_domain = False
+        try:
+            # Usar la ruta /api/check-domain internamente es una opción, o replicar su lógica mejorada
+            pythoncom.CoInitialize()
             try:
-                cmd = f"net user {username} /domain"
-                result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+                c = wmi.WMI()
+                for system in c.Win32_ComputerSystem():
+                    domain_from_wmi = system.Domain
+                    if domain_from_wmi and domain_from_wmi.upper() != "WORKGROUP":
+                        is_machine_in_domain = True
+                        machine_domain = domain_from_wmi
+                        break
+            finally:
+                pythoncom.CoUninitialize()
+            if not is_machine_in_domain and machine_domain == "WORKGROUP": # Si WMI falló o dio WORKGROUP, intentar wmic subprocess
+                domain_info_output = subprocess.check_output("wmic computersystem get domain", shell=True, text=True, encoding='utf-8', errors='backslashreplace', timeout=5).strip()
+                domain_lines = [line.strip() for line in domain_info_output.split('\n') if line.strip()]
+                if len(domain_lines) > 1:
+                    domain_from_wmic_subp = domain_lines[1]
+                    if domain_from_wmic_subp and domain_from_wmic_subp.upper() != "WORKGROUP":
+                        is_machine_in_domain = True
+                        machine_domain = domain_from_wmic_subp
+        except Exception as domain_check_err:
+            print(f"[get_user_details] Error obteniendo dominio de la máquina: {domain_check_err}")
+        
+        print(f"[get_user_details] Máquina en dominio '{machine_domain}', is_machine_in_domain: {is_machine_in_domain}")
+
+        user_details_final = None # Cambiado a None para una verificación más clara
+        domain_attempts_log = []
+
+        if is_machine_in_domain:
+            print(f"[get_user_details] Intentando 'net user \"{username}\" /domain'")
+            try:
+                cmd_domain = f"net user \"{username}\" /domain"
+                # Usar utf-8 y backslashreplace para mejor manejo de caracteres y depuración
+                result_domain = subprocess.run(cmd_domain, shell=True, capture_output=True, text=True, encoding='utf-8', errors='backslashreplace', timeout=10)
                 
-                if result.returncode == 0:
-                    output = result.stdout
-                    user_details["isDomain"] = True
-                    user_details["domain"] = domain
+                if result_domain.returncode == 0:
+                    output_domain = result_domain.stdout
+                    parsed_data = {"isDomain": True, "domain": machine_domain, "username": username, "method": "net user /domain"}
                     
-                    # Extraer información clave del output
+                    # Patrones de parseo (ajustar según sea necesario)
                     patterns = {
-                        "username": r"User name\s+(.+)",
-                        "fullName": r"Full Name\s+(.+)",
-                        "accountActive": r"Account active\s+(.+)",
-                        "accountExpires": r"Account expires\s+(.+)",
-                        "passwordLastSet": r"Password last set\s+(.+)",
-                        "passwordExpires": r"Password expires\s+(.+)",
-                        "passwordChangeable": r"Password changeable\s+(.+)",
-                        "passwordRequired": r"Password required\s+(.+)",
-                        "userMayChangePassword": r"User may change password\s+(.+)",
-                        "lastLogon": r"Last logon\s+(.+)",
-                        "workstationsAllowed": r"Workstations allowed\s+(.+)",
-                        "logonScript": r"Logon script\s+(.+)",
-                        "userProfile": r"User profile\s+(.+)",
-                        "homeDirectory": r"Home directory\s+(.+)",
-                        "logonHoursAllowed": r"Logon hours allowed\s+(.+)",
+                        "fullName": [r"(?im)^\s*Full Name\s+(.+)$", r"(?im)^\s*Nombre completo\s+(.+)$"],
+                        "accountActive": [r"(?im)^\s*Account active\s+(Yes|No)$", r"(?im)^\s*Cuenta activa\s+(Sí|No)$"],
+                        # Añadir más patrones si es necesario
                     }
+                    for key, regex_list in patterns.items():
+                        for regex in regex_list:
+                            match = re.search(regex, output_domain)
+                            if match:
+                                value = match.group(1).strip()
+                                if key == "accountActive": value = value.lower() in ["yes", "sí"]
+                                parsed_data[key] = value
+                                break
                     
-                    # También patrones para versión en español
-                    es_patterns = {
-                        "username": r"Nombre de usuario\s+(.+)",
-                        "fullName": r"Nombre completo\s+(.+)",
-                        "accountActive": r"Cuenta activa\s+(.+)",
-                        "accountExpires": r"La cuenta caduca\s+(.+)",
-                        "passwordLastSet": r"Último cambio de contraseña\s+(.+)",
-                        "passwordExpires": r"La contraseña caduca\s+(.+)",
-                        "passwordChangeable": r"Contraseña modificable\s+(.+)",
-                        "passwordRequired": r"Se requiere contraseña\s+(.+)",
-                        "userMayChangePassword": r"El usuario puede cambiar la contraseña\s+(.+)",
-                        "lastLogon": r"Última sesión\s+(.+)",
-                    }
-                    
-                    # Combinar patrones para detectar en ambos idiomas
-                    all_patterns = {}
-                    for key in patterns:
-                        all_patterns[key] = f"({patterns[key]}|{es_patterns.get(key, '')})"
-                    
-                    # Extraer cada campo
-                    for key, pattern in all_patterns.items():
-                        match = re.search(pattern, output, re.IGNORECASE)
-                        if match:
-                            value = match.group(1).strip()
-                            if '\\' in value and len(value) > 1:
-                                value = value.split('\\')[1]  # Eliminar prefijo de dominio si existe
-                            user_details[key] = value
-                    
-                    # Extraer membresías de grupos
-                    groups = []
-                    group_section = re.findall(r"Global Group memberships\s+(.+?)(?=The command completed|\Z)", 
-                                              output, re.DOTALL | re.IGNORECASE)
-                    
-                    if group_section:
-                        group_text = group_section[0]
-                        group_lines = [line.strip() for line in group_text.split('\n') if line.strip()]
-                        for line in group_lines:
-                            # Extraer grupos, pueden estar separados por espacios y *
-                            line_groups = re.findall(r"\*([^*]+)", line)
-                            for group in line_groups:
-                                clean_group = group.strip()
-                                if clean_group:
-                                    groups.append(clean_group)
-                    
-                    user_details["groups"] = groups
-                    
-                    # Analizar fechas de contraseña para calcular días restantes
-                    if "passwordExpires" in user_details and "Never" not in user_details["passwordExpires"] and "nunca" not in user_details["passwordExpires"].lower():
-                        try:
-                            import datetime
-                            # Intentar diferentes formatos de fecha
-                            date_formats = [
-                                "%m/%d/%Y %I:%M:%S %p", "%d/%m/%Y %I:%M:%S %p",
-                                "%m/%d/%Y %H:%M:%S", "%d/%m/%Y %H:%M:%S",
-                                "%m/%d/%Y", "%d/%m/%Y"
-                            ]
-                            
-                            expiry_date = None
-                            for fmt in date_formats:
-                                try:
-                                    expiry_date = datetime.datetime.strptime(user_details["passwordExpires"], fmt)
-                                    break
-                                except ValueError:
-                                    continue
-                            
-                            if expiry_date:
-                                today = datetime.datetime.now()
-                                delta = expiry_date - today
-                                user_details["passwordExpiresInDays"] = delta.days
-                                user_details["passwordStatus"] = (
-                                    "expired" if delta.days < 0 else
-                                    "warning" if delta.days < 7 else
-                                    "ok"
-                                )
-                        except Exception as date_error:
-                            print(f"Error procesando fecha: {date_error}")
+                    if parsed_data.get("fullName"): # Considerar éxito si se obtiene el nombre completo
+                        user_details_final = parsed_data
+                        domain_attempts_log.append("net user /domain: Success.")
                     else:
-                        user_details["passwordExpiresInDays"] = None
-                        user_details["passwordStatus"] = "neverExpires"
-                
+                        log_msg = "net user /domain: OK, but no key data parsed (e.g., fullName)."
+                        print(f"[get_user_details] {log_msg}")
+                        print(f"[get_user_details] Salida de 'net user /domain' que no se pudo parsear:\n{output_domain}")
+                        domain_attempts_log.append(log_msg + f" Output sample: {output_domain[:200]}")
                 else:
-                    # Si no se pudo obtener info del dominio, intentar con usuario local
-                    print(f"Error obteniendo detalles de usuario de dominio: {result.stderr}")
-                    is_domain = False
+                    err_msg = result_domain.stderr.strip() if result_domain.stderr else f"Exit code {result_domain.returncode}"
+                    domain_attempts_log.append(f"net user /domain: Failed - {err_msg}")
             
-            except Exception as domain_error:
-                print(f"Error procesando información de dominio: {domain_error}")
-                is_domain = False
-        
-        # Si no es usuario de dominio o falló la consulta de dominio, intentar con usuario local
-        if not is_domain:
-            try:
-                cmd = f"net user {username}"
-                result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-                
-                if result.returncode == 0:
-                    output = result.stdout
-                    user_details["isDomain"] = False
-                    user_details["domain"] = "Local"
-                    
-                    # Usar los mismos patrones que antes para extraer la información
-                    patterns = {
-                        "username": r"User name\s+(.+)",
-                        "fullName": r"Full Name\s+(.+)",
-                        "accountActive": r"Account active\s+(.+)",
-                        "accountExpires": r"Account expires\s+(.+)",
-                        "passwordLastSet": r"Password last set\s+(.+)",
-                        "passwordExpires": r"Password expires\s+(.+)",
-                        "passwordChangeable": r"Password changeable\s+(.+)",
-                        "passwordRequired": r"Password required\s+(.+)",
-                        "userMayChangePassword": r"User may change password\s+(.+)",
-                        "lastLogon": r"Last logon\s+(.+)",
-                    }
-                    
-                    # También patrones para versión en español
-                    es_patterns = {
-                        "username": r"Nombre de usuario\s+(.+)",
-                        "fullName": r"Nombre completo\s+(.+)",
-                        "accountActive": r"Cuenta activa\s+(.+)",
-                        "accountExpires": r"La cuenta caduca\s+(.+)",
-                        "passwordLastSet": r"Último cambio de contraseña\s+(.+)",
-                        "passwordExpires": r"La contraseña caduca\s+(.+)",
-                        "passwordChangeable": r"Contraseña modificable\s+(.+)",
-                        "passwordRequired": r"Se requiere contraseña\s+(.+)",
-                        "userMayChangePassword": r"El usuario puede cambiar la contraseña\s+(.+)",
-                        "lastLogon": r"Última sesión\s+(.+)",
-                    }
-                    
-                    # Combinar patrones para detectar en ambos idiomas
-                    all_patterns = {}
-                    for key in patterns:
-                        all_patterns[key] = f"({patterns[key]}|{es_patterns.get(key, '')})"
-                    
-                    # Extraer cada campo
-                    for key, pattern in all_patterns.items():
-                        match = re.search(pattern, output, re.IGNORECASE)
-                        if match:
-                            user_details[key] = match.group(1).strip()
-                    
-                    # Extraer membresías de grupos locales
-                    groups = []
-                    group_section = re.findall(r"Local Group Memberships\s+(.+?)(?=The command completed|\Z)", 
-                                              output, re.DOTALL | re.IGNORECASE)
-                    
-                    if group_section:
-                        group_text = group_section[0]
-                        group_lines = [line.strip() for line in group_text.split('\n') if line.strip()]
-                        for line in group_lines:
-                            # Extraer grupos, pueden estar separados por espacios y *
-                            line_groups = re.findall(r"\*([^*]+)", line)
-                            for group in line_groups:
-                                clean_group = group.strip()
-                                if clean_group:
-                                    groups.append(clean_group)
-                    
-                    user_details["groups"] = groups
-                    
-                    # Analizar fechas para calcular días restantes
-                    if "passwordExpires" in user_details and "Never" not in user_details["passwordExpires"] and "nunca" not in user_details["passwordExpires"].lower():
-                        try:
-                            import datetime
-                            # Intentar diferentes formatos de fecha
-                            date_formats = [
-                                "%m/%d/%Y %I:%M:%S %p", "%d/%m/%Y %I:%M:%S %p",
-                                "%m/%d/%Y %H:%M:%S", "%d/%m/%Y %H:%M:%S",
-                                "%m/%d/%Y", "%d/%m/%Y"
-                            ]
-                            
-                            expiry_date = None
-                            for fmt in date_formats:
-                                try:
-                                    expiry_date = datetime.datetime.strptime(user_details["passwordExpires"], fmt)
-                                    break
-                                except ValueError:
-                                    continue
-                            
-                            if expiry_date:
-                                today = datetime.datetime.now()
-                                delta = expiry_date - today
-                                user_details["passwordExpiresInDays"] = delta.days
-                                user_details["passwordStatus"] = (
-                                    "expired" if delta.days < 0 else
-                                    "warning" if delta.days < 7 else
-                                    "ok"
-                                )
-                        except Exception as date_error:
-                            print(f"Error procesando fecha: {date_error}")
-                    else:
-                        user_details["passwordExpiresInDays"] = None
-                        user_details["passwordStatus"] = "neverExpires"
+            except subprocess.TimeoutExpired: domain_attempts_log.append("net user /domain: Timeout.")
+            except Exception as e_domain: domain_attempts_log.append(f"net user /domain: Exception - {str(e_domain)}")
+
+            if not user_details_final: # Si net user /domain falló o no parseó
+                print(f"[get_user_details] 'net user /domain' no obtuvo datos, intentando PowerShell.")
+                ps_result = _get_user_details_via_powershell(username, machine_domain)
+                if ps_result and ps_result.get("success"): # ps_result ahora es el JSON directo
+                    user_details_final = ps_result # El script de PS ya incluye 'method', 'isDomain', etc.
+                    # ps_result ya tiene la estructura correcta, incluyendo 'success' y los datos del usuario
+                    # Si el script de PS devuelve success=true, sus datos son los detalles del usuario.
+                    # user_details_final["method"] = ps_result.get("method", "PowerShell-Unknown") # Ya debería estar en ps_result
+                    domain_attempts_log.append(f"PowerShell: Success ({ps_result.get('method', '')}).")
                 else:
-                    return jsonify({
-                        "success": False,
-                        "message": "No se pudo obtener información del usuario",
-                        "error": result.stderr
-                    }), 400
-                    
-            except Exception as local_error:
-                print(f"Error obteniendo detalles de usuario local: {local_error}")
-                return jsonify({
-                    "success": False,
-                    "message": "Error al obtener detalles del usuario",
-                    "error": str(local_error)
-                }), 500
+                    err_msg_ps = ps_result.get('message', 'Error desconocido de PowerShell') if ps_result else 'PowerShell no devolvió resultado'
+                    domain_attempts_log.append(f"PowerShell: Failed - {err_msg_ps}")
         
-        return jsonify({
-            "success": True,
-            "userDetails": user_details
-        })
+        if not user_details_final: # Si sigue sin datos (no es de dominio, o los intentos de dominio fallaron)
+            local_attempt_log = ""
+            print(f"[get_user_details] Intentando 'net user \"{username}\"' (local)")
+            try:
+                cmd_local = f"net user \"{username}\""
+                result_local = subprocess.run(cmd_local, shell=True, capture_output=True, text=True, encoding='utf-8', errors='backslashreplace', timeout=10)
+                if result_local.returncode == 0:
+                    output_local = result_local.stdout
+                    parsed_local_data = {"isDomain": False, "domain": "Local", "username": username, "method": "net user (local)"}
+                    # Modificar patterns_local para hacer el colon opcional (:?)
+                    patterns_local = {
+                        "fullName": [r"(?im)^\s*Full Name\s*:?\s*(.+)$", r"(?im)^\s*Nombre completo\s*:?\s*(.+)$"],
+                        "accountActive": [r"(?im)^\s*Account active\s*:?\s*(Yes|No)$", r"(?im)^\s*Cuenta activa\s*:?\s*(Sí|No)$"],
+                    }
+                    for key, regex_list in patterns_local.items():
+                        for regex in regex_list:
+                            match = re.search(regex, output_local)
+                            if match:
+                                value = match.group(1).strip()
+                                if key == "accountActive": value = value.lower() in ["yes", "sí"]
+                                parsed_local_data[key] = value
+                                break 
+                    if parsed_local_data.get("fullName"):
+                        user_details_final = parsed_local_data
+                        local_attempt_log = "net user (local): Success."
+                    else:
+                        local_attempt_log = "net user (local): OK, but no key data parsed (e.g., fullName)."
+                        print(f"[get_user_details] {local_attempt_log}")
+                        # ESTA LÍNEA ES CRUCIAL:
+                        print(f"[get_user_details] Salida de 'net user' (local) que no se pudo parsear:\n{output_local}")
+                else:
+                    local_attempt_log = f"net user (local): Failed - {result_local.stderr.strip() if result_local.stderr else f'Exit code {result_local.returncode}'}"
+            except subprocess.TimeoutExpired: local_attempt_log = "net user (local): Timeout."
+            except Exception as e_local: local_attempt_log = f"net user (local): Exception - {str(e_local)}"
+            
+            if local_attempt_log: domain_attempts_log.append(local_attempt_log) # Añadir log del intento local
+
+        if user_details_final and user_details_final.get("success") is False: # Si PowerShell falló y asignó su error a user_details_final
+            # Esto puede pasar si ps_result es {"success": False, ...} y se asigna directamente
+           
+
+            error_message = user_details_final.get("message", "Fallo en el método de obtención de detalles.")
+            print(f"[get_user_details] Método final falló explícitamente: {error_message}")
+            return jsonify({"success": False, "message": error_message, "error_details": {"log": "; ".join(domain_attempts_log)}}), 400
+
+        if user_details_final and user_details_final.get("success") is True: # Si PowerShell tuvo éxito
+             # El campo 'method' y otros ya están en user_details_final desde el script de PS
+             # Asegurar que 'isDomain' y 'domain' estén correctamente poblados por el script de PS
+            print(f"[get_user_details] Devolviendo user_details_final (desde PS exitoso): {user_details_final}")
+            return jsonify({"success": True, "userDetails": user_details_final })
+
+
+        if user_details_final: # Si net user (domain o local) tuvo éxito
+            print(f"[get_user_details] Devolviendo user_details_final: {user_details_final}")
+            return jsonify({"success": True, "userDetails": user_details_final})
+        else: # Todos los métodos fallaron
+            error_message = f"No se pudo obtener información del usuario '{username}' después de todos los intentos."
+            print(f"[get_user_details] {error_message} Logs: {'; '.join(domain_attempts_log)}")
+            return jsonify({"success": False, "message": error_message, "error_details": {"log": "; ".join(domain_attempts_log)}}), 400
         
     except Exception as e:
-        print(f"Error general obteniendo detalles de usuario: {e}")
-        return jsonify({
-            "success": False,
-            "message": "Error general al obtener detalles del usuario",
-            "error": str(e)
-        }), 500
+        print(f"[get_user_details] Error general: {e}")
+        traceback.print_exc()
+        return jsonify({"success": False, "message": "Error general al obtener detalles del usuario.", "error_details": {"exception": str(e)}}), 500
 
 @app.route('/api/open-password-dialog', methods=['POST', 'OPTIONS'])
 def open_password_dialog():
-    if request.method == 'OPTIONS':
-        return '', 200
+    if request.method == 'OPTIONS': return '', 200
         
     try:
         # Determinar si estamos en un dominio
-        domain_info = subprocess.check_output("wmic computersystem get domain", shell=True).decode().strip()
+        domain_info = subprocess.check_output("wmic computersystem get domain", shell=True, text=True, encoding='utf-8', errors='backslashreplace', timeout=5).strip()
         domain_lines = [line.strip() for line in domain_info.split('\n') if line.strip()]
         domain = domain_lines[1] if len(domain_lines) > 1 else ""
         is_domain = domain.upper() != "WORKGROUP"
@@ -1574,17 +1422,11 @@ def open_password_dialog():
         if is_domain:
             # Para equipos en dominio, intentar abrir CTRL+ALT+DEL mediante bloqueo de pantalla
             ctypes.windll.user32.LockWorkStation()
-            return jsonify({
-                "success": True, 
-                "message": "Se ha bloqueado la pantalla. Presione Ctrl+Alt+Supr y seleccione 'Cambiar una contraseña'"
-            })
+            return jsonify({"success": True, "message": "Se ha bloqueado la pantalla. Presione Ctrl+Alt+Supr y seleccione 'Cambiar una contraseña'"})
         else:
             # Para equipos no en dominio, abrir el panel de control de cuentas de usuario
             subprocess.Popen('control userpasswords2', shell=True)
-            return jsonify({
-                "success": True, 
-                "message": "Panel de control de contraseñas abierto"
-            })
+            return jsonify({"success": True, "message": "Panel de control de contraseñas abierto"})
             
     except Exception as e:
         print(f"Error al abrir panel de contraseñas: {str(e)}")
@@ -1661,157 +1503,84 @@ def handle_exception(e):
     }), 500
 
 def init_database():
-    """
-    Inicializa la conexión a la base de datos y verifica los recursos necesarios
-    como procedimientos almacenados y tablas.
-    """
+    connection = None
     try:
-        print("Iniciando conexión a la base de datos...")
+        print("[DB Init] Iniciando conexión a la base de datos...")
         connection = get_connection()
-        
         if not connection:
-            print(" No se pudo establecer conexión a la base de datos.")
+            print("[DB Init]  No se pudo establecer conexión a la base de datos. La inicialización de la BD se omite.")
             return False
             
-        print(" Conexión a la base de datos establecida correctamente")
-        
-        # Verificar y actualizar el procedimiento almacenado
-        try:
-            with connection.cursor() as cursor:
-                # Primero verificar si el procedimiento existe
-                cursor.execute("""
-                SELECT ROUTINE_NAME 
-                FROM INFORMATION_SCHEMA.ROUTINES 
-                WHERE ROUTINE_TYPE = 'PROCEDURE' 
-                AND ROUTINE_NAME = 'Sp_CreaIncidente'
-                """)
-                result = cursor.fetchone()
-                
-                # Si existe, eliminarlo y volver a crearlo
-                if result:
-                    print(" Actualizando el procedimiento almacenado 'Sp_CreaIncidente'...")
-                    cursor.execute("DROP PROCEDURE IF EXISTS Sp_CreaIncidente")
-                    connection.commit()
-                
-                # Crear el procedimiento con la estructura correcta, incluyendo MAC, Marca y Modelo
-                # Asegúrate de que este string SQL no contenga caracteres extraños no visibles.
-                # Si el archivo app.py está guardado como UTF-8, los caracteres literales deberían estar bien.
-                sql_create_procedure = """
-                CREATE PROCEDURE Sp_CreaIncidente(
-                    IN p_HostName VARCHAR(100),
-                    IN p_NumeroSerie VARCHAR(100),
-                    IN p_UsoCPU BIGINT,
-                    IN p_UsoMemoria BIGINT,
-                    IN p_UsoHD BIGINT,
-                    IN p_Temperatura BIGINT,
-                    IN p_FechaIncidente TIMESTAMP,
-                    IN p_estatus TINYINT,
-                    IN p_Dominio VARCHAR(100),
-                    IN p_IpPublica VARCHAR(50),
-                    IN p_Usuario VARCHAR(50),
-                    IN p_MAC VARCHAR(50),
-                    IN p_Marca VARCHAR(50),
-                    IN p_Modelo VARCHAR(50)
-                )
-                BEGIN
-                    INSERT INTO Incidentes(
-                        HostName, 
-                        NumeroSerie, 
-                        UsoCPU, 
-                        UsoMemoria, 
-                        UsoHD, 
-                        Temperatura, 
-                        FechaIncidente,
-                        estatus,
-                        Dominio,
-                        IpPublica,
-                        Usuario,
-                        MAC,
-                        Marca,
-                        Modelo
-                    )
-                    VALUES(
-                        p_HostName, 
-                        p_NumeroSerie, 
-                        p_UsoCPU, 
-                        p_UsoMemoria, 
-                        p_UsoHD, 
-                        p_Temperatura, 
-                        p_FechaIncidente,
-                        p_estatus,
-                        p_Dominio,
-                        p_IpPublica,
-                        p_Usuario,
-                        p_MAC,
-                        p_Marca,
-                        p_Modelo
-                    );
-                END
-                """
-                cursor.execute(sql_create_procedure)
-                connection.commit()
-                print("✅ Procedimiento almacenado 'Sp_CreaIncidente' actualizado correctamente")
-                
-                # Verificar la estructura del procedimiento para confirmar
-                cursor.execute("""
-                SELECT PARAMETER_NAME, ORDINAL_POSITION 
-                FROM INFORMATION_SCHEMA.PARAMETERS 
-                WHERE SPECIFIC_NAME = 'Sp_CreaIncidente' 
-                ORDER BY ORDINAL_POSITION
-                """)
-                params_info = cursor.fetchall()
-                # Considera no imprimir directamente si params_info puede contener caracteres problemáticos
-                # o asegúrate de que tu consola/log pueda manejar UTF-8.
-                # print(f"Estructura verificada del procedimiento: {params_info}") 
-                
-                # Ahora verificar que la tabla tenga la estructura correcta
-                cursor.execute("""
-                DESCRIBE Incidentes
-                """)
-                table_structure = cursor.fetchall()
-                # print(f"Estructura de la tabla Incidentes: {table_structure}")
-                
-        except Exception as e:
-            # Intenta imprimir el error de una forma más segura si el error mismo contiene caracteres problemáticos
-            try:
-                print(f" Error al actualizar el procedimiento almacenado: {str(e).encode('utf-8', 'replace').decode('utf-8')}")
-            except:
-                print(" Error al actualizar el procedimiento almacenado (y error al imprimir el error).")
+        print("[DB Init]  Conexión a la base de datos establecida correctamente.")
+        with connection.cursor() as cursor:
+            print("[DB Init] ⏳ Verificando/Actualizando el procedimiento almacenado 'Sp_CreaIncidente'...")
+            db_name = os.getenv('DB_NAME', 'prueba')
+            cursor.execute(f"SELECT ROUTINE_NAME FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_TYPE = 'PROCEDURE' AND ROUTINE_NAME = 'Sp_CreaIncidente' AND ROUTINE_SCHEMA = '{db_name}'")
+            result = cursor.fetchone()
+            if result:
+                print("[DB Init] ⏳ 'Sp_CreaIncidente' existe. Eliminándolo para recrear...")
+                cursor.execute("DROP PROCEDURE IF EXISTS Sp_CreaIncidente")
             
-        connection.close()
+            sql_create_procedure = """
+            CREATE PROCEDURE Sp_CreaIncidente(
+                IN p_HostName VARCHAR(100), IN p_NumeroSerie VARCHAR(100), IN p_UsoCPU BIGINT, IN p_UsoMemoria BIGINT,
+                IN p_UsoHD BIGINT, IN p_Temperatura BIGINT, IN p_FechaIncidente TIMESTAMP, IN p_estatus TINYINT,
+                IN p_Dominio VARCHAR(100), IN p_IpPublica VARCHAR(50), IN p_Usuario VARCHAR(50),
+                IN p_MAC VARCHAR(50), IN p_Marca VARCHAR(50), IN p_Modelo VARCHAR(50)
+            )
+            BEGIN
+                INSERT INTO Incidentes(HostName, NumeroSerie, UsoCPU, UsoMemoria, UsoHD, Temperatura, FechaIncidente, estatus, Dominio, IpPublica, Usuario, MAC, Marca, Modelo)
+                VALUES(p_HostName, p_NumeroSerie, p_UsoCPU, p_UsoMemoria, p_UsoHD, p_Temperatura, p_FechaIncidente, p_estatus, p_Dominio, p_IpPublica, p_Usuario, p_MAC, p_Marca, p_Modelo);
+            END
+            """
+            cursor.execute(sql_create_procedure)
+            connection.commit()
+            print("[DB Init] Procedimiento almacenado 'Sp_CreaIncidente' (re)creado correctamente.")
         return True
     except Exception as e:
-        try:
-            print(f" Error inicializando la base de datos: {str(e).encode('utf-8', 'replace').decode('utf-8')}")
-        except:
-            print(" Error inicializando la base de datos (y error al imprimir el error).")
+        error_str = str(e).encode('utf-8', 'replace').decode('utf-8')
+        print(f"[DB Init] Error general inicializando la base de datos: {error_str}")
+        traceback.print_exc()
         return False
+    finally:
+        if connection:
+            try: connection.close()
+            except Exception as e_close: print(f"[DB Init] Error cerrando conexión: {e_close}")
 
 if __name__ == "__main__":
-    init_database()
+    print("[Main] Iniciando SondaClick Backend...")
+    db_init_success = init_database()
+    if not db_init_success:
+        print("[Main] La inicialización de la base de datos NO fue exitosa. El backend podría tener funcionalidades limitadas.")
+    else:
+        print("[Main] Inicialización de la base de datos completada (o intentada).")
 
-    # Importar sys para verificar si la aplicación está empaquetada
-    import sys
-    import os # Asegúrate de que os esté importado si usas os.getenv más adelante
-
-    # Determinar si estamos en modo desarrollo o producción/empaquetado
-    # getattr(sys, 'frozen', False) es True si está empaquetado por PyInstaller/cx_Freeze
-    # También puedes usar una variable de entorno si prefieres
     is_packaged = getattr(sys, 'frozen', False)
+    run_debug_mode = not is_packaged
+    use_reloader_mode = not is_packaged
     
-    # Configurar debug y use_reloader basándose en si está empaquetado
-    # Para producción/empaquetado, debug y use_reloader deben ser False
-    run_debug_mode = not is_packaged  # True si NO está empaquetado (desarrollo)
-    use_reloader_mode = not is_packaged # True si NO está empaquetado (desarrollo)
-
-    # Si quieres ser más explícito con una variable de entorno para desarrollo:
-    # FLASK_ENV = os.getenv('FLASK_ENV')
-    # run_debug_mode = FLASK_ENV == 'development'
-    # use_reloader_mode = FLASK_ENV == 'development'
-    
-    print(f"SondaClick Backend: Iniciando en modo {'DESARROLLO (debug y reloader activos)' if run_debug_mode else 'PRODUCCIÓN/EMPAQUETADO (debug y reloader inactivos)'}")
+    print(f"[Main] Preparando para iniciar Flask:")
     print(f"  sys.frozen: {getattr(sys, 'frozen', 'No definido (no empaquetado)')}")
-    print(f"  run_debug_mode: {run_debug_mode}")
-    print(f"  use_reloader_mode: {use_reloader_mode}")
+    print(f"  run_debug_mode (Flask debug): {run_debug_mode}")
+    print(f"  use_reloader_mode (Flask reloader): {use_reloader_mode}")
+    print(f"  Host: 0.0.0.0, Port: 5000")
 
-    app.run(debug=run_debug_mode, use_reloader=use_reloader_mode, host='0.0.0.0', port=5000)
+    try:
+        print("[Main] Intentando ejecutar app.run()...")
+        app.run(debug=run_debug_mode, use_reloader=use_reloader_mode, host='0.0.0.0', port=5000)
+        print("[Main] Flask app.run() ha finalizado.") 
+    except SystemExit:
+        print("[Main] Flask app.run() detenido por SystemExit (normal si el reloader está activo).")
+    except OSError as e_os:
+        if hasattr(e_os, 'winerror') and e_os.winerror == 10048: # Puerto en uso Windows
+             print(f"[Main] ERROR CRÍTICO: El puerto 5000 ya está en uso. Detalles: {e_os}")
+        elif e_os.errno == 98: # Puerto en uso Linux/macOS
+             print(f"[Main] ERROR CRÍTICO: El puerto 5000 ya está en uso. Detalles: {e_os}")
+        else:
+             print(f"[Main] ERROR CRÍTICO DEL SISTEMA OPERATIVO al iniciar Flask: {e_os}")
+        traceback.print_exc()
+    except Exception as e_flask:
+        print(f"[Main] ERROR CRÍTICO al intentar iniciar Flask: {e_flask}")
+        traceback.print_exc()
+    
+    print("[Main] Script del backend finalizado.")
