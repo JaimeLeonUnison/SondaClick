@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { ToastContainer, toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import Example from "../components/Example";
@@ -38,6 +38,36 @@ interface NetworkInterface {
   mac: string | null;
 }
 
+// NUEVA INTERFAZ para la respuesta de /api/check-notification
+interface NotificationCheckResponse {
+  success: boolean;
+  ticketId: string | null;
+  macAddress?: string; // macAddress es opcional en la respuesta si no hay ticket
+  message?: string;
+}
+
+// NUEVA INTERFAZ para la respuesta de /api/acknowledge-notification
+interface AcknowledgeNotificationResponse {
+  success: boolean;
+  message: string;
+}
+
+// NUEVA INTERFAZ para un item del historial de notificaciones
+interface NotificationHistoryItem {
+  ticketId: string;
+  fechaIncidente: string; // O el nombre del campo que uses para la fecha
+  mensaje: string; // O una descripción del incidente
+  estatus: string; // O el estado actual del ticket/notificación
+  // Añade otros campos que quieras mostrar, ej: UsoCPU, UsoMemoria, etc.
+}
+
+// NUEVA INTERFAZ para la respuesta del historial
+interface NotificationHistoryResponse {
+  success: boolean;
+  history?: NotificationHistoryItem[];
+  message?: string;
+}
+
 interface SystemInfo {
   user: string;
   hostname: string;
@@ -66,6 +96,15 @@ function App(): React.ReactElement {
     useState<boolean>(false);
   const { isInDomain, isLoading: isDomainLoading } = useDomainCheck();
 
+  // ESTADOS PARA EL MODAL DE HISTORIAL
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState<boolean>(false);
+  const [notificationHistory, setNotificationHistory] = useState<NotificationHistoryItem[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState<boolean>(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+
+
+  const [activeNotificationTicketId, setActiveNotificationTicketId] = useState<string | null>(null);
+
   console.log("HOOK VALS - isDomainLoading:", isDomainLoading, "isInDomain:", isInDomain);
   if (info) {
     console.log("INFO VAL - info.domain:", info.domain);
@@ -88,6 +127,137 @@ function App(): React.ReactElement {
   }
   console.log("ButtonLogic: Final shouldShowPasswordButton:", shouldShowPasswordButton);
 
+  // FUNCIÓN PARA OBTENER Y MOSTRAR EL HISTORIAL DE NOTIFICACIONES
+  const fetchAndShowHistory = async () => {
+    setIsLoadingHistory(true);
+    setHistoryError(null);
+    try {
+      const response = await fetch("http://localhost:5000/api/notifications-history"); // Asegúrate que este endpoint exista en tu backend
+      const data: NotificationHistoryResponse = await response.json();
+      if (response.ok && data.success && data.history) {
+        setNotificationHistory(data.history);
+      } else {
+        setNotificationHistory([]);
+        setHistoryError(data.message || "No se pudo cargar el historial.");
+        toast.error(data.message || "Error al cargar el historial de notificaciones.");
+      }
+    } catch (err) {
+      console.error("[App.tsx - fetchAndShowHistory] Error:", err);
+      setNotificationHistory([]);
+      setHistoryError("Error de conexión al cargar el historial.");
+      toast.error("Error de conexión al cargar el historial de notificaciones.");
+    } finally {
+      setIsLoadingHistory(false);
+      setIsHistoryModalOpen(true); // Abrir el modal después de intentar cargar
+    }
+  };
+
+
+  // Función para marcar una notificación como leída
+  const acknowledgeNotification = useCallback(async (ticketId: string) => {
+    console.log(`[App.tsx - acknowledgeNotification] Acusando recibo del ticket: ${ticketId}`);
+    try {
+      const response = await fetch("http://localhost:5000/api/acknowledge-notification", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ ticketId }),
+      });
+      const data: AcknowledgeNotificationResponse = await response.json();
+      if (response.ok && data.success) {
+        toast.success(`Notificación ${ticketId} marcada como leída.`);
+        setActiveNotificationTicketId(null); // Limpiar el ticket activo
+        toast.dismiss(`ticket-${ticketId}`); // Cierra el toast específico si aún está abierto
+      } else {
+        toast.error(data.message || "Error al marcar la notificación como leída.");
+      }
+    } catch (err) {
+      console.error("[App.tsx - acknowledgeNotification] Error:", err);
+      toast.error("Error de conexión al marcar la notificación.");
+    }
+  }, []);
+
+  // useEffect para verificar notificaciones pendientes
+  useEffect(() => {
+    const checkPendingNotifications = async () => {
+      console.log("[App.tsx - checkPendingNotifications] Verificando notificaciones...");
+      try {
+        const response = await fetch("http://localhost:5000/api/check-notification");
+        if (!response.ok) {
+          console.error("[App.tsx - checkPendingNotifications] Error HTTP:", response.status);
+          // No mostrar toast de error aquí para no ser intrusivo,
+          // ya que esto se ejecuta en segundo plano.
+          return;
+        }
+        const data: NotificationCheckResponse = await response.json();
+        console.log("[App.tsx - checkPendingNotifications] Respuesta:", data);
+
+        if (data.success && data.ticketId) {
+          // Si es un nuevo ticket o no hay uno activo actualmente siendo mostrado
+          if (data.ticketId !== activeNotificationTicketId) {
+             // Si ya hay un toast para un ticket anterior, ciérralo antes de mostrar el nuevo.
+            if (activeNotificationTicketId && toast.isActive(`ticket-${activeNotificationTicketId}`)) {
+              toast.dismiss(`ticket-${activeNotificationTicketId}`);
+            }
+
+            setActiveNotificationTicketId(data.ticketId);
+            const toastId = `ticket-${data.ticketId}`;
+
+            if (!toast.isActive(toastId)) {
+              toast.info(() => (
+                <div>
+                  <p className="font-semibold">¡Nueva Notificación Pendiente!</p>
+                  <p>Ticket ID: {data.ticketId}</p>
+                  <p>Por favor, atienda esta notificación.</p>
+                  <button
+                    onClick={() => {
+                      acknowledgeNotification(data.ticketId as string);
+                      // closeToast(); // No es necesario si acknowledgeNotification ya cierra el toast por ID
+                    }}
+                    className="mt-2 px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm"
+                  >
+                    Marcar como Atendido
+                  </button>
+                </div>
+              ), {
+                toastId: toastId,
+                autoClose: false, // El usuario debe cerrarlo o interactuar
+                closeOnClick: false, // Evitar que se cierre al hacer clic en el cuerpo del toast
+                onClose: () => {
+                  // Si el usuario cierra el toast manualmente sin usar el botón,
+                  // podríamos querer resetear activeNotificationTicketId si el ticket no fue acusado.
+                  // Esto es para evitar que el mismo toast reaparezca inmediatamente si el backend aún lo envía.
+                  // Sin embargo, si el usuario lo cierra, es una forma de "ignorar temporalmente".
+                  // Si el ticketId que se cerró es el activo, lo limpiamos para permitir que se muestre de nuevo si persiste.
+                  if (activeNotificationTicketId === data.ticketId) {
+                     // setActiveNotificationTicketId(null); // Comentado para reevaluar si es el mejor comportamiento
+                  }
+                }
+              });
+            }
+          }
+        } else if (data.success && !data.ticketId && activeNotificationTicketId) {
+          // Si no hay ticketId del backend pero teníamos uno activo, significa que se resolvió o ya no está pendiente.
+          // Podemos cerrar el toast si aún está activo.
+          if (toast.isActive(`ticket-${activeNotificationTicketId}`)) {
+            toast.dismiss(`ticket-${activeNotificationTicketId}`);
+          }
+          setActiveNotificationTicketId(null);
+        }
+      } catch (err) {
+        console.error("[App.tsx - checkPendingNotifications] Error al verificar notificaciones:", err);
+      }
+    };
+
+    // Verificar inmediatamente y luego cada 10 segundos (ajusta según necesidad)
+    checkPendingNotifications();
+    const notificationInterval = setInterval(checkPendingNotifications, 10000); // 10 segundos
+
+    return () => {
+      clearInterval(notificationInterval);
+    };
+  }, [activeNotificationTicketId, acknowledgeNotification]); // Incluir acknowledgeNotification
 
   useEffect(() => {
     const fetchInfo = async (): Promise<void> => {
@@ -262,6 +432,14 @@ function App(): React.ReactElement {
             )}
             <Example onClick={openTeamsApp}>
               Levantar ticket con soporte
+            </Example>
+            {/* BOTÓN PARA VER HISTORIAL DE NOTIFICACIONES */}
+            <Example
+              onClick={fetchAndShowHistory}
+              disabled={isLoadingHistory}
+              className="bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg transition-colors"
+            >
+              {isLoadingHistory ? "Cargando..." : "Ver notificaciones pasadas"}
             </Example>
           </div>
         )}
@@ -452,6 +630,51 @@ function App(): React.ReactElement {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* MODAL PARA EL HISTORIAL DE NOTIFICACIONES */}
+      {isHistoryModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white p-5 rounded-lg shadow-xl max-w-lg w-full max-h-[80vh] flex flex-col">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-semibold">Historial de Notificaciones</h2>
+              <button
+                onClick={() => setIsHistoryModalOpen(false)}
+                className="text-gray-500 hover:text-gray-700 text-2xl"
+                aria-label="Cerrar modal"
+              >
+                &times;
+              </button>
+            </div>
+            <div className="overflow-y-auto flex-grow">
+              {isLoadingHistory && <p className="text-center">Cargando historial...</p>}
+              {!isLoadingHistory && historyError && (
+                <p className="text-center text-red-500">{historyError}</p>
+              )}
+              {!isLoadingHistory && !historyError && notificationHistory.length === 0 && (
+                <p className="text-center text-gray-500">No hay notificaciones pasadas.</p>
+              )}
+              {!isLoadingHistory && !historyError && notificationHistory.length > 0 && (
+                <ul className="space-y-3">
+                  {notificationHistory.map((item) => (
+                    <li key={item.ticketId} className="p-3 bg-gray-100 rounded-md shadow-sm">
+                      <p className="font-semibold text-sm">Ticket: <span className="font-normal">{item.ticketId}</span></p>
+                      <p className="text-xs text-gray-600">Fecha: <span className="font-normal">{new Date(item.fechaIncidente).toLocaleString()}</span></p>
+                      <p className="text-sm mt-1">Mensaje: <span className="font-normal">{item.mensaje}</span></p>
+                      <p className="text-xs">Estatus: <span className="font-normal">{item.estatus}</span></p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <button
+              onClick={() => setIsHistoryModalOpen(false)}
+              className="mt-4 bg-blue-500 hover:bg-blue-600 text-white py-2 px-4 rounded-lg self-end"
+            >
+              Cerrar
+            </button>
           </div>
         </div>
       )}
