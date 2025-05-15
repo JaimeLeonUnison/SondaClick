@@ -1,6 +1,6 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-#from dotenv import load_dotenv
+from dotenv import load_dotenv
 import threading
 import wmi
 import psutil
@@ -25,7 +25,7 @@ app = Flask(__name__)
 CORS(app)  # Permite que el frontend (React) haga peticiones
 
 #Cargar variables de entorno desde el archivo .env
-#load_dotenv()
+load_dotenv()
 
 def get_connection():
     """
@@ -1587,49 +1587,116 @@ def handle_exception(e):
     }), 500
 
 def init_database():
-    connection = None
+    """
+    Inicializa la conexión a la base de datos y verifica los recursos necesarios
+    como procedimientos almacenados y tablas.
+    """
     try:
-        print("[DB Init] Iniciando conexión a la base de datos...")
+        print("Iniciando conexión a la base de datos...")
         connection = get_connection()
+        
         if not connection:
-            print("[DB Init]  No se pudo establecer conexión a la base de datos. La inicialización de la BD se omite.")
+            print(" No se pudo establecer conexión a la base de datos.")
             return False
             
-        print("[DB Init]  Conexión a la base de datos establecida correctamente.")
-        with connection.cursor() as cursor:
-            print("[DB Init] ⏳ Verificando/Actualizando el procedimiento almacenado 'Sp_CreaIncidente'...")
-            db_name = os.getenv('DB_NAME', 'prueba')
-            cursor.execute(f"SELECT ROUTINE_NAME FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_TYPE = 'PROCEDURE' AND ROUTINE_NAME = 'Sp_CreaIncidente' AND ROUTINE_SCHEMA = '{db_name}'")
-            result = cursor.fetchone()
-            if result:
-                print("[DB Init] ⏳ 'Sp_CreaIncidente' existe. Eliminándolo para recrear...")
-                cursor.execute("DROP PROCEDURE IF EXISTS Sp_CreaIncidente")
+        print(" Conexión a la base de datos establecida correctamente")
+        
+        # Verificar y actualizar el procedimiento almacenado
+        try:
+            with connection.cursor() as cursor:
+                # Primero verificar si el procedimiento existe
+                cursor.execute("""
+                SELECT ROUTINE_NAME 
+                FROM INFORMATION_SCHEMA.ROUTINES 
+                WHERE ROUTINE_TYPE = 'PROCEDURE' 
+                AND ROUTINE_NAME = 'Sp_CreaIncidente'
+                """)
+                result = cursor.fetchone()
+                
+                # Si existe, eliminarlo y volver a crearlo
+                if result:
+                    print(" Actualizando el procedimiento almacenado 'Sp_CreaIncidente'...")
+                    cursor.execute("DROP PROCEDURE IF EXISTS Sp_CreaIncidente")
+                    connection.commit()
+                
+                # Crear el procedimiento con la estructura correcta, incluyendo MAC, Marca y Modelo
+                cursor.execute("""
+                CREATE PROCEDURE Sp_CreaIncidente(
+                    IN p_HostName VARCHAR(100),
+                    IN p_NumeroSerie VARCHAR(100),
+                    IN p_UsoCPU BIGINT,
+                    IN p_UsoMemoria BIGINT,
+                    IN p_UsoHD BIGINT,
+                    IN p_Temperatura BIGINT,
+                    IN p_estatus TINYINT,
+                    IN p_Dominio VARCHAR(100),
+                    IN p_IpPublica VARCHAR(50),
+                    IN p_Usuario VARCHAR(50),
+                    IN p_MAC VARCHAR(50),
+                    IN p_Marca VARCHAR(50),
+                    IN p_Modelo VARCHAR(50)
+                )
+                BEGIN
+                    INSERT INTO Incidentes(
+                        HostName, 
+                        NumeroSerie, 
+                        UsoCPU, 
+                        UsoMemoria, 
+                        UsoHD, 
+                        Temperatura, 
+                        estatus,
+                        Dominio,
+                        IpPublica,
+                        Usuario,
+                        MAC,
+                        Marca,
+                        Modelo
+                    )
+                    VALUES(
+                        p_HostName, 
+                        p_NumeroSerie, 
+                        p_UsoCPU, 
+                        p_UsoMemoria, 
+                        p_UsoHD, 
+                        p_Temperatura, 
+                        p_estatus,
+                        p_Dominio,
+                        p_IpPublica,
+                        p_Usuario,
+                        p_MAC,
+                        p_Marca,
+                        p_Modelo
+                    );
+                END
+                """)
+                connection.commit()
+                print(" Procedimiento almacenado 'Sp_CreaIncidente' actualizado correctamente")
+                
+                # Verificar la estructura del procedimiento para confirmar
+                cursor.execute("""
+                SELECT PARAMETER_NAME, ORDINAL_POSITION 
+                FROM INFORMATION_SCHEMA.PARAMETERS 
+                WHERE SPECIFIC_NAME = 'Sp_CreaIncidente' 
+                ORDER BY ORDINAL_POSITION
+                """)
+                params_info = cursor.fetchall()
+                print(f"Estructura verificada del procedimiento: {params_info}")
+                
+                # Ahora verificar que la tabla tenga la estructura correcta
+                cursor.execute("""
+                DESCRIBE Incidentes
+                """)
+                table_structure = cursor.fetchall()
+                print(f"Estructura de la tabla Incidentes: {table_structure}")
+                
+        except Exception as e:
+            print(f" Error al actualizar el procedimiento almacenado: {e}")
             
-            sql_create_procedure = """
-            CREATE PROCEDURE Sp_CreaIncidente(
-                IN p_HostName VARCHAR(100), IN p_NumeroSerie VARCHAR(100), IN p_UsoCPU BIGINT, IN p_UsoMemoria BIGINT,
-                IN p_UsoHD BIGINT, IN p_Temperatura BIGINT, IN p_FechaIncidente TIMESTAMP, IN p_estatus TINYINT,
-                IN p_Dominio VARCHAR(100), IN p_IpPublica VARCHAR(50), IN p_Usuario VARCHAR(50),
-                IN p_MAC VARCHAR(50), IN p_Marca VARCHAR(50), IN p_Modelo VARCHAR(50)
-            )
-            BEGIN
-                INSERT INTO Incidentes(HostName, NumeroSerie, UsoCPU, UsoMemoria, UsoHD, Temperatura, FechaIncidente, estatus, Dominio, IpPublica, Usuario, MAC, Marca, Modelo)
-                VALUES(p_HostName, p_NumeroSerie, p_UsoCPU, p_UsoMemoria, p_UsoHD, p_Temperatura, p_FechaIncidente, p_estatus, p_Dominio, p_IpPublica, p_Usuario, p_MAC, p_Marca, p_Modelo);
-            END
-            """
-            cursor.execute(sql_create_procedure)
-            connection.commit()
-            print("[DB Init] Procedimiento almacenado 'Sp_CreaIncidente' (re)creado correctamente.")
+        connection.close()
         return True
     except Exception as e:
-        error_str = str(e).encode('utf-8', 'replace').decode('utf-8')
-        print(f"[DB Init] Error general inicializando la base de datos: {error_str}")
-        traceback.print_exc()
+        print(f" Error inicializando la base de datos: {e}")
         return False
-    finally:
-        if connection:
-            try: connection.close()
-            except Exception as e_close: print(f"[DB Init] Error cerrando conexión: {e_close}")
 
 if __name__ == "__main__":
     print("[Main] Iniciando SondaClick Backend...")
