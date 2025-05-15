@@ -1173,9 +1173,9 @@ def system_info():
         "memory": memory._asdict(),
         "cpu_speed": get_cpu_speed(),
         "temperatures": temps,
-        # "gpu_temp": get_gpu_temp(), # temps ya puede incluir gpu
+         "gpu_temp": get_gpu_temp(), # temps ya puede incluir gpu
         "ip_local": get_local_ip(),
-        # "ip_public": ip_publica, # Ya está como IpPublica
+        "ip_public": ip_publica, # Ya está como IpPublica
         "disk_usage": disk,
         "serial_number": get_serial_number(),
         "network_interfaces": interfaces,
