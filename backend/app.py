@@ -111,6 +111,37 @@ def execute_procedure(procedure_name, params=None):
         if connection: # Asegurarse de que connection no sea None
             connection.close()
 
+def get_main_mac_address(): # Renombrado para evitar confusiones
+    """
+    Obtiene la dirección MAC de la interfaz de red principal
+    """
+    mac_address_found = ""
+    try:
+        local_ip = get_local_ip()
+        interfaces = get_network_interfaces()
+        # Primero buscar la interfaz con la IP local activa
+        for iface in interfaces:
+            if iface.get('ip') == local_ip and iface.get('mac'):
+                mac_address_found = iface.get('mac')[:50]  # Limitar a 50 caracteres
+                break
+        # Si no encontramos, usar la primera interfaz con MAC e IP asignada que no sea loopback
+        if not mac_address_found:
+            for iface in interfaces:
+                # Asegurarse que iface tenga IP y MAC y no sea loopback
+                ip_addr = iface.get('ip')
+                if ip_addr and iface.get('mac') and not ip_addr.startswith('127.'):
+                    mac_address_found = iface.get('mac')[:50]
+                    break
+            
+        if not mac_address_found:
+            print("No se encontró dirección MAC activa.")
+            return None
+        return mac_address_found
+    except Exception as e:
+        print(f"[get_main_mac_address] Error obteniendo dirección MAC: {e}")
+        traceback.print_exc()
+        return None
+
 # Ejemplo de función específica para guardar datos de monitoreo del sistema
 def save_system_info(hostname, cpu_percent, memory_percent, disk_percent, temperatures):
     """
@@ -175,7 +206,9 @@ def save_system_info(hostname, cpu_percent, memory_percent, disk_percent, temper
             ip_publica = get_public_ip() or "No disponible"
             
             # Obtener MAC de la interfaz activa
-            mac_address = ""
+            mac_address = get_main_mac_address()
+            if not mac_address:
+                mac_address = "No disponible"
             # Determinar IP local activa
             local_ip = get_local_ip()
             interfaces = get_network_interfaces()
@@ -304,6 +337,7 @@ def save_system_info(hostname, cpu_percent, memory_percent, disk_percent, temper
             
     except Exception as e:
         print(f"Error guardando información del sistema: {e}")
+        traceback.print_exc()
         return False
 
 def get_system_details():
@@ -533,6 +567,31 @@ def _get_local_password_expiration():
         print(f"[_get_local_password_expiration] Error general: {e}")
         traceback.print_exc()
         return {"expires": None, "message": "Error al verificar la información de contraseña local.", "method": "local_exception"}
+    
+@app.route('/api/check-notification', methods=['GET'])
+def check_notification_route():
+    """
+    Consulta si hay notificaciones pendientes para la MAC de este equipo.
+    Llama a SpConsultaNotificacion
+    """
+    mac_address = get_main_mac_address()
+    if not mac_address:
+        return jsonify({"success": False, "message": "No se pudo obtener la dirección MAC."}), 500
+    
+    try: 
+        query = "CALL SpConsultaNotificacion(%s)"
+        result = execute_query(query, (mac_address,), fetch=True)
+        
+        if result and len(result) > 0:
+            # Ajusta el índice result[0][0] si la estructura de datos de tu SP es diferente
+            ticket_id = result[0][0]
+            print(f"[check_notification_route] Notificación encontrada para {mac_address}: Ticket ID {ticket_id}")
+            return jsonify({"success": True, "ticketId": ticket_id, "macAddress": mac_address, "message": "No hay notificaciones pendientes."})
+    except Exception as e:
+        print(f"[check_notification_route] Error al consultar notificaciones: {e}")
+        traceback.print_exc()
+        return jsonify({"success": False, "message": f"Error del servidor al consultar notificaciones: {str(e)}"}), 500
+    
 
 @app.route('/api/check-domain', methods=['GET'])
 def check_domain():
@@ -1033,6 +1092,30 @@ def open_windows_settings():
     except Exception as e:
         print(f"Error al abrir configuración de Windows: {str(e)}")
         return jsonify({"success": False, "message": str(e)}), 500
+    
+@app.route('/api/acknowledge-notification', methods=['POST'])
+def acknowledge_notification_route():
+    """
+    Actualiza el estado de la notificación en la base de datos.
+    Llama a SpActualizaNotificacion.
+    """
+    data = request.get_json()
+    if not data or 'ticketId' not in data:
+        return jsonify({"success": False, "message": "Falta ticketId en la solicitud."}), 400
+    ticket_id = data.get['ticketId']
+    try:
+        success = execute_procedure("SpActualizaNotificacion", (ticket_id,))
+        
+        if success:
+            print(f"[acknowledge_notification] Notificación {ticket_id} actualizada correctamente.")
+            return jsonify({"success": True, "message": "Notificación actualizada correctamente."}), 200
+        else:
+            print(f"[acknowledge_notification] Error al actualizar la notificación {ticket_id}.")
+            return jsonify({"success": False, "message": "Error al actualizar la notificación."}), 500
+    except Exception as e:
+        print(f"[acknowledge_notification] Excepción: {e}")
+        traceback.print_exc()
+        return jsonify({"success": False, "message": f"Error al actualizar la notificación: {str(e)}"}), 500
 
 @app.route("/api/system-info") # Eliminar la duplicada, solo una definición
 def system_info():
@@ -1096,6 +1179,7 @@ def system_info():
         "disk_usage": disk,
         "serial_number": get_serial_number(),
         "network_interfaces": interfaces,
+        "primary_mac_address": get_main_mac_address(),
         "critical_conditions": critical_conditions,
         "saved_to_database": saved_to_db, # No necesita `and len(critical_conditions) > 0`
         "thresholds": {
