@@ -1,3 +1,23 @@
+# filepath: c:\Users\jaime\Documents\SondaClick\backend\app.py
+import logging
+import os # Asegúrate que os esté importado si no lo está ya arriba
+
+# Configurar logging
+log_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'backend_app.log')
+logging.basicConfig(
+    filename=log_file_path,
+    level=logging.DEBUG, # Captura todos los niveles de log (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+    format='%(asctime)s - %(levelname)s - %(module)s - %(funcName)s - %(message)s',
+    filemode='a' # 'a' para añadir, 'w' para sobrescribir en cada ejecución
+)
+
+# Reemplaza tus print() con logging.info(), logging.error(), etc.
+# Ejemplo en get_connection:
+# print(f"[DB Connection] Error al conectar a la base de datos: {e}")
+# Se convierte en:
+# logging.error(f"[DB Connection] Error al conectar a la base de datos: {e}", exc_info=True) 
+# (exc_info=True añade el traceback de la excepción al log)
+
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -34,10 +54,10 @@ def get_connection():
     """
     try:
         connection = pymysql.connect(
-            host=os.getenv('DB_HOST', 'localhost'),
-            user=os.getenv('DB_USER', 'root'),
-            password=os.getenv('DB_PASSWORD', ''),
-            database=os.getenv('DB_NAME', 'prueba'),
+            host=os.getenv('DB_HOST', '200.94.143.36'),
+            user=os.getenv('DB_USER', 'SONDAHMO'),
+            password=os.getenv('DB_PASSWORD', 'S0nd425*'),
+            database=os.getenv('DB_NAME', 'sondaclickmx'),
             port=int(os.getenv('DB_PORT', 3306)),
             charset='utf8mb4',
             connect_timeout=10 # Aumentado ligeramente el timeout de conexión
@@ -153,9 +173,9 @@ def save_system_info(hostname, cpu_percent, memory_percent, disk_percent, temper
         cpu_temp = temperatures.get('cpu', None)
         
         # Obtener umbrales desde variables de entorno o usar valores predeterminados
-        cpu_threshold = float(os.getenv('CRITICAL_CPU_THRESHOLD', 90))
+        cpu_threshold = float(os.getenv('CRITICAL_CPU_THRESHOLD', 95))
         temp_threshold = float(os.getenv('CRITICAL_TEMP_THRESHOLD', 90))
-        memory_threshold = float(os.getenv('CRITICAL_MEMORY_THRESHOLD', 90))
+        memory_threshold = float(os.getenv('CRITICAL_MEMORY_THRESHOLD', 95))
         
         # Verificar si se cumplen las condiciones críticas para guardar en BD
         is_critical = False
@@ -297,8 +317,8 @@ def save_system_info(hostname, cpu_percent, memory_percent, disk_percent, temper
                 # Guardar en NotificacionesCliente con los campos correctos
                 insert_query = """
                 INSERT INTO NotificacionesCliente 
-                (HostName, NumeroSerie, UsoCPU, UsoMemoria, UsoHD, Temperatura, FechaIncidente, estatus, Dominio, IpPublica, Usuario, MAC, Marca, Modelo) 
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (HostName, NumeroSerie, UsoCPU, UsoMemoria, UsoHD, Temperatura, estatus, Dominio, IpPublica, Usuario, MAC, Marca, Modelo) 
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """
                 
                 insert_params = (
@@ -1562,7 +1582,6 @@ def get_notification_history():
 
             formatted_history.append({
                 "ticketId": ticket_id,
-                "fechaIncidente": "Fecha no disponible", # Ajustar si el SP devuelve una fecha
                 "mensaje": mensaje,
                 "estatus": estatus
             })
@@ -1695,13 +1714,14 @@ def init_database():
                     IN p_Modelo VARCHAR(50)
                 )
                 BEGIN
-                    INSERT INTO Incidentes(
+                    INSERT INTO NotificacionesCliente(
                         HostName, 
                         NumeroSerie, 
                         UsoCPU, 
                         UsoMemoria, 
                         UsoHD, 
                         Temperatura, 
+                        FechaIncidente,
                         estatus,
                         Dominio,
                         IpPublica,
@@ -1717,6 +1737,7 @@ def init_database():
                         p_UsoMemoria, 
                         p_UsoHD, 
                         p_Temperatura, 
+                        CURDATE(),
                         p_estatus,
                         p_Dominio,
                         p_IpPublica,
