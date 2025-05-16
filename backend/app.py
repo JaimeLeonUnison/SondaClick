@@ -268,7 +268,6 @@ def save_system_info(hostname, cpu_percent, memory_percent, disk_percent, temper
                 memory_percent_int,     # 4. UsoMemoria
                 disk_percent_int,       # 5. UsoHD
                 cpu_temp_int,           # 6. Temperatura
-                current_date,           # 7. FechaIncidente
                 estatus,                # 8. estatus
                 dominio,                # 9. Dominio
                 ip_publica,             # 10. IpPublica
@@ -309,7 +308,6 @@ def save_system_info(hostname, cpu_percent, memory_percent, disk_percent, temper
                     memory_percent_int,   # UsoMemoria
                     disk_percent_int,     # UsoHD
                     cpu_temp_int,         # Temperatura
-                    current_date,         # FechaIncidente
                     estatus,              # estatus
                     dominio,              # Dominio
                     ip_publica,           # IpPublica
@@ -586,7 +584,11 @@ def check_notification_route():
             # Ajusta el índice result[0][0] si la estructura de datos de tu SP es diferente
             ticket_id = result[0][0]
             print(f"[check_notification_route] Notificación encontrada para {mac_address}: Ticket ID {ticket_id}")
-            return jsonify({"success": True, "ticketId": ticket_id, "macAddress": mac_address, "message": "No hay notificaciones pendientes."})
+            return jsonify({"success": True, "ticketId": ticket_id, "macAddress": mac_address, "message": "No hay notificaciones pendientes."}), 200
+        else:
+            # No hay notificaciones pendientes
+            print(f"[check_notification_route] No hay notificaciones pendientes para {mac_address}")
+            return jsonify({"success": False, "message": "No hay notificaciones pendientes."}), 200
     except Exception as e:
         print(f"[check_notification_route] Error al consultar notificaciones: {e}")
         traceback.print_exc()
@@ -796,7 +798,7 @@ def password_expiration():
                 # Fallback a PowerShell si net user no dio info clara
                 print("[password_expiration] 'net user /domain' no proporcionó información clara de expiración o no se pudo calcular. Intentando PowerShell.")
                 return _get_password_expiration_via_powershell()
-            else: # net user /domain falló
+            else:
                 print(f"[password_expiration] 'net user /domain' falló (Code: {result.returncode}, Err: {result.stderr.strip()}). Intentando PowerShell.")
                 return _get_password_expiration_via_powershell()
         except subprocess.TimeoutExpired:
@@ -1102,10 +1104,10 @@ def acknowledge_notification_route():
     data = request.get_json()
     if not data or 'ticketId' not in data:
         return jsonify({"success": False, "message": "Falta ticketId en la solicitud."}), 400
-    ticket_id = data.get['ticketId']
+    ticket_id = data['ticketId']  # Corrected line: Access ticketId correctly
     try:
         success = execute_procedure("SpActualizaNotificacion", (ticket_id,))
-        
+
         if success:
             print(f"[acknowledge_notification] Notificación {ticket_id} actualizada correctamente.")
             return jsonify({"success": True, "message": "Notificación actualizada correctamente."}), 200
@@ -1495,7 +1497,7 @@ def get_user_details():
 @app.route('/api/open-password-dialog', methods=['POST', 'OPTIONS'])
 def open_password_dialog():
     if request.method == 'OPTIONS': return '', 200
-        
+
     try:
         # Determinar si estamos en un dominio
         domain_info = subprocess.check_output("wmic computersystem get domain", shell=True, text=True, encoding='utf-8', errors='backslashreplace', timeout=5).strip()
@@ -1515,7 +1517,63 @@ def open_password_dialog():
     except Exception as e:
         print(f"Error al abrir panel de contraseñas: {str(e)}")
         return jsonify({"success": False, "message": str(e)}), 500
-    
+
+@app.route('/api/notifications-history', methods=['GET'])
+def get_notification_history():
+    """
+    Obtiene el historial de notificaciones desde la base de datos
+    llamando al procedimiento almacenado SpConsultaNotificacion con la MAC del equipo.
+    """
+    mac_address = get_main_mac_address()
+    if not mac_address:
+        return jsonify({"success": False, "message": "No se pudo obtener la dirección MAC."}), 500
+
+    try:
+        # Llama al procedimiento almacenado SpConsultaNotificacion
+        query = "CALL SpConsultaNotificacion(%s)"
+        history = execute_query(query, (mac_address,), fetch=True)
+
+        if history is None:
+            # execute_query devuelve None si hay un error en la ejecución de la consulta.
+            return jsonify({"success": False, "message": "Error al obtener el historial de notificaciones desde el SP."}), 500
+
+        if not history:
+            # Si la consulta se ejecuta bien pero no devuelve filas.
+            print(f"[get_notification_history] No se encontró historial de notificaciones para MAC: {mac_address}")
+            return jsonify({"success": True, "history": [], "message": "No hay historial de notificaciones para este equipo."})
+
+        formatted_history = []
+        # Columnas devueltas por SpConsultaNotificacion:
+        # item[0]: Hostname
+        # item[1]: MAC
+        # item[2]: Ticket
+        # item[3]: Descripción
+        # item[4]: Estatus
+        # Nota: SpConsultaNotificacion no parece devolver una fecha directamente.
+        # Si necesitas una fecha, deberás ajustar el SP o la tabla de origen.
+        for item in history:
+            hostname = item[0] if len(item) > 0 else "N/A"
+            ticket_id = item[2] if len(item) > 2 else "N/A"
+            descripcion = item[3] if len(item) > 3 else "Sin descripción"
+            estatus = str(item[4]) if len(item) > 4 else "Estatus no disponible"
+            
+            # Construir el mensaje. Puedes ajustarlo según tus necesidades.
+            mensaje = f"Alerta en {hostname}: {descripcion}"
+
+            formatted_history.append({
+                "ticketId": ticket_id,
+                "fechaIncidente": "Fecha no disponible", # Ajustar si el SP devuelve una fecha
+                "mensaje": mensaje,
+                "estatus": estatus
+            })
+
+        return jsonify({"success": True, "history": formatted_history})
+
+    except Exception as e:
+        print(f"[get_notification_history] Error: {e}")
+        traceback.print_exc()
+        return jsonify({"success": False, "message": f"Error del servidor al obtener el historial de notificaciones: {str(e)}"}), 500
+
 @app.route('/shutdown', methods=['POST'])
 def shutdown_route():
     """
