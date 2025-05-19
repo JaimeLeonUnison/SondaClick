@@ -1,15 +1,71 @@
 # filepath: c:\Users\jaime\Documents\SondaClick\backend\app.py
 import logging
-import os # Asegúrate que os esté importado si no lo está ya arriba
+import os
+import sys # Necesario para sys.frozen y sys.executable
+import traceback # <--- MUEVE ESTA LÍNEA AQUÍ ARRIBA
 
 # Configurar logging
-log_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'backend_app.log')
-logging.basicConfig(
-    filename=log_file_path,
-    level=logging.DEBUG, # Captura todos los niveles de log (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-    format='%(asctime)s - %(levelname)s - %(module)s - %(funcName)s - %(message)s',
-    filemode='a' # 'a' para añadir, 'w' para sobrescribir en cada ejecución
-)
+
+# Determinar la ruta base de la aplicación
+if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+    # Aplicación empaquetada por PyInstaller (modo one-file)
+    # sys._MEIPASS es la carpeta temporal donde se extraen los archivos
+    # Para el log, queremos el directorio del ejecutable, no la carpeta _MEIPASS
+    application_path = os.path.dirname(sys.executable)
+elif getattr(sys, 'frozen', False):
+    # Aplicación empaquetada (otro empaquetador o modo one-folder de PyInstaller)
+    application_path = os.path.dirname(sys.executable)
+else:
+    # Aplicación no empaquetada (ejecutándose como script .py)
+    application_path = os.path.dirname(os.path.abspath(__file__))
+
+log_file_name = 'backend_app.log'
+log_file_path = os.path.join(application_path, log_file_name)
+
+# Imprimir la ruta del log para depuración ANTES de configurar el logging
+# Esta salida será visible si puedes ver la consola del backend.
+print(f"[PRE-LOGGING] Ruta de log determinada: {log_file_path}")
+print(f"[PRE-LOGGING] sys.executable: {sys.executable}")
+print(f"[PRE-LOGGING] os.getcwd(): {os.getcwd()}")
+if hasattr(sys, '_MEIPASS'):
+    print(f"[PRE-LOGGING] sys._MEIPASS: {sys._MEIPASS}")
+
+
+try:
+    logging.basicConfig(
+        filename=log_file_path,
+        level=logging.DEBUG,
+        format='%(asctime)s - %(levelname)s - [%(threadName)s] - %(module)s - %(funcName)s - %(lineno)d - %(message)s',
+        filemode='a'  # 'a' para añadir, 'w' para sobrescribir
+    )
+    logging.info(f"Logging inicializado. Guardando logs en: {log_file_path}")
+    print(f"[PRE-LOGGING] Configuración de logging para {log_file_path} parece exitosa.")
+except Exception as e:
+    # Si logging.basicConfig falla (ej. por permisos), esto se imprimirá en la consola.
+    print(f"[PRE-LOGGING] ERROR CRÍTICO configurando logging en {log_file_path}: {e}")
+    traceback.print_exc() # Ahora traceback estará definido
+    # Como fallback, intentar loguear en el directorio temporal del sistema
+    try:
+        import tempfile
+        fallback_log_path = os.path.join(tempfile.gettempdir(), f"sondaclick_backend_fallback_{os.getpid()}.log")
+        print(f"[PRE-LOGGING] Intentando fallback logging en: {fallback_log_path}")
+        # Reconfigurar logging para el fallback
+        # Primero, remover handlers existentes si los hay para evitar duplicados o conflictos
+        for handler in logging.root.handlers[:]:
+            logging.root.removeHandler(handler)
+        
+        logging.basicConfig(
+            filename=fallback_log_path,
+            level=logging.DEBUG,
+            format='%(asctime)s - %(levelname)s - [%(threadName)s] - %(module)s - %(funcName)s - %(lineno)d - %(message)s',
+            filemode='a'
+        )
+        logging.info(f"Logging inicializado en ruta de FALLBACK: {fallback_log_path}. Error original con {log_file_path}: {e}")
+        print(f"[PRE-LOGGING] Configuración de logging de FALLBACK para {fallback_log_path} parece exitosa.")
+    except Exception as e_fallback:
+        print(f"[PRE-LOGGING] ERROR CRÍTICO configurando logging de FALLBACK en {fallback_log_path}: {e_fallback}")
+        traceback.print_exc() # También aquí, por si acaso
+
 
 # Reemplaza tus print() con logging.info(), logging.error(), etc.
 # Ejemplo en get_connection:
@@ -20,7 +76,7 @@ logging.basicConfig(
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv # Asegúrate de importar find_dotenv
 import threading
 import wmi
 import psutil
@@ -37,7 +93,6 @@ import re
 import os
 import pymysql
 import pythoncom
-import traceback # Para logging de excepciones completas
 import json # Para parsear la salida JSON de PowerShell
 import tempfile # Para _get_user_details_via_powershell
 
@@ -45,26 +100,72 @@ app = Flask(__name__)
 CORS(app)  # Permite que el frontend (React) haga peticiones
 
 #Cargar variables de entorno desde el archivo .env
-load_dotenv()
+# load_dotenv() # La carga de .env se movió después de la depuración de variables de entorno
+
+# --- INICIO: Depuración de Variables de Entorno ---
+print("[Backend - DEBUG] === Variables de Entorno ANTES de load_dotenv ===")
+print(json.dumps(dict(os.environ), indent=2, sort_keys=True))
+print("[Backend - DEBUG] ================================================")
+
+# Intenta encontrar y cargar el archivo .env
+# find_dotenv() buscará un archivo .env subiendo por el árbol de directorios desde el script actual.
+env_path_found = find_dotenv(usecwd=True) # usecwd=True busca primero en el CWD
+
+if env_path_found:
+    print(f"[Backend - DEBUG] Archivo .env encontrado por find_dotenv: {env_path_found}")
+    # Carga el archivo .env. Por defecto, override=False, no sobrescribirá las existentes.
+    # Si quisieras que el .env del backend SIEMPRE sobrescriba, usarías: load_dotenv(dotenv_path=env_path_found, override=True)
+    loaded_successfully = load_dotenv(dotenv_path=env_path_found, verbose=True)
+    if loaded_successfully:
+        print(f"[Backend - DEBUG] Variables cargadas desde {env_path_found}.")
+    else:
+        print(f"[Backend - DEBUG] No se cargaron variables desde {env_path_found} (podría estar vacío o ya todas definidas).")
+else:
+    print("[Backend - DEBUG] No se encontró ningún archivo .env por find_dotenv.")
+
+print("[Backend - DEBUG] === Variables de Entorno DESPUÉS de load_dotenv ===")
+print(json.dumps(dict(os.environ), indent=2, sort_keys=True))
+print("[Backend - DEBUG] =================================================")
+# --- FIN: Depuración de Variables de Entorno ---
 
 def get_connection():
     """
     Obtiene una conexión a la base de datos usando credenciales seguras
     desde variables de entorno
     """
+    db_host = os.getenv('DB_HOST')
+    db_user = os.getenv('DB_USER')
+    db_password = os.getenv('DB_PASSWORD') # No loguear la contraseña directamente por seguridad
+    db_name = os.getenv('DB_NAME')
+    db_port_str = os.getenv('DB_PORT', '3306')
+
+    logging.debug(f"[DB Connection] Intentando conectar a: Host={db_host}, User={db_user}, DBName={db_name}, Port={db_port_str}")
+
+    if not all([db_host, db_user, db_name]): # db_password puede ser vacía para algunos setups locales
+        logging.error(f"[DB Connection] Variables de entorno de BD incompletas. Host: {db_host}, User: {db_user}, Name: {db_name}, Port: {db_port_str}. Asegúrate de que el archivo .env está presente y es leído correctamente por la aplicación empaquetada.")
+        return None
+    
     try:
+        db_port = int(db_port_str)
         connection = pymysql.connect(
-            host=os.getenv('DB_HOST', ''),
-            user=os.getenv('DB_USER', ''),
-            password=os.getenv('DB_PASSWORD', ''),
-            database=os.getenv('DB_NAME', ''),
-            port=int(os.getenv('DB_PORT', 3306)),
+            host=db_host,
+            user=db_user,
+            password=db_password,
+            database=db_name,
+            port=db_port,
             charset='utf8mb4',
-            connect_timeout=10 # Aumentado ligeramente el timeout de conexión
+            connect_timeout=10 
         )
+        logging.info("[DB Connection] Conexión a la base de datos establecida correctamente.") # Cambiado a INFO para más visibilidad
         return connection
+    except ValueError as ve:
+        logging.error(f"[DB Connection] Error: DB_PORT ('{db_port_str}') no es un entero válido. {ve}", exc_info=True)
+        return None
+    except pymysql.Error as pe: # Captura errores específicos de pymysql
+        logging.error(f"[DB Connection] Error de PyMySQL al conectar a la base de datos: {pe}", exc_info=True)
+        return None
     except Exception as e:
-        print(f"[DB Connection] Error al conectar a la base de datos: {e}")
+        logging.error(f"[DB Connection] Error general al conectar a la base de datos: {e}", exc_info=True)
         return None
 
 def execute_query(query, params=None, fetch=False):
@@ -114,21 +215,21 @@ def execute_procedure(procedure_name, params=None):
     """
     connection = get_connection()
     if not connection:
-        print(f" No se pudo establecer conexión a la base de datos para {procedure_name}")
+        logging.error(f"No se pudo establecer conexión a la base de datos para {procedure_name}") # USAR LOGGING
         return False
         
     try:
         with connection.cursor() as cursor:
-            print(f" Ejecutando procedimiento {procedure_name} con parámetros: {params}")
+            logging.info(f"Ejecutando procedimiento {procedure_name} con parámetros: {params}") # USAR LOGGING
             cursor.callproc(procedure_name, params)
             connection.commit()
-            print(f" Procedimiento {procedure_name} ejecutado y transacción confirmada")
+            logging.info(f"Procedimiento {procedure_name} ejecutado y transacción confirmada") # USAR LOGGING
             return True
     except Exception as e:
-        print(f" Error al ejecutar el procedimiento {procedure_name}: {e}")
+        logging.error(f"Error al ejecutar el procedimiento {procedure_name}: {e}", exc_info=True) # USAR LOGGING
         return False
     finally:
-        if connection: # Asegurarse de que connection no sea None
+        if connection:
             connection.close()
 
 def get_main_mac_address(): # Renombrado para evitar confusiones
@@ -1158,11 +1259,11 @@ def system_info():
     
     ip_publica = get_public_ip() or "No disponible"
     
-    # Obtener umbrales desde variables de entorno
-    cpu_threshold = float(os.getenv('CRITICAL_CPU_THRESHOLD', 90))
-    temp_threshold = float(os.getenv('CRITICAL_TEMP_THRESHOLD', 90))
-    memory_threshold = float(os.getenv('CRITICAL_MEMORY_THRESHOLD', 90))
-    
+    # Obtener umbrales desde variables de entorno o usar valores predeterminados consistentes
+    cpu_threshold = float(os.getenv('CRITICAL_CPU_THRESHOLD', 95)) # Unificar con save_system_info
+    temp_threshold = float(os.getenv('CRITICAL_TEMP_THRESHOLD', 90))# Unificar con save_system_info
+    memory_threshold = float(os.getenv('CRITICAL_MEMORY_THRESHOLD', 95))# Unificar con save_system_info
+
     critical_conditions = []
     if cpu_percent >= cpu_threshold:
         critical_conditions.append(f"CPU al {cpu_percent}% (umbral: {cpu_threshold}%)")
@@ -1176,15 +1277,18 @@ def system_info():
     
     saved_to_db = False
     if critical_conditions:
-        print(f"[system_info] Condiciones críticas detectadas: {critical_conditions}. Intentando guardar...")
-        saved_to_db = save_system_info( # save_system_info ya obtiene serial, mac, etc.
+        logging.info(f"[system_info] Condiciones críticas detectadas: {critical_conditions}. Intentando guardar...") # USAR LOGGING
+        saved_to_db = save_system_info( 
             hostname=hostname,
             cpu_percent=cpu_percent,
             memory_percent=memory.percent,
-            disk_percent=disk.get("percent", 0), # Usar .get con default
+            disk_percent=disk.get("percent", 0), 
             temperatures=temps
+            # No es necesario pasar los umbrales si save_system_info los lee de os.getenv
         )
-        print(f"[system_info] Resultado de save_system_info: {saved_to_db}")
+        logging.info(f"[system_info] Resultado de save_system_info: {saved_to_db}") # USAR LOGGING
+    else:
+        logging.info("[system_info] No se detectaron condiciones críticas. No se guardará en BD.") # USAR LOGGING
 
 
     return jsonify({
@@ -1203,7 +1307,7 @@ def system_info():
         "network_interfaces": interfaces,
         "primary_mac_address": get_main_mac_address(),
         "critical_conditions": critical_conditions,
-        "saved_to_database": saved_to_db, # No necesita `and len(critical_conditions) > 0`
+        "saved_to_database": saved_to_db, 
         "thresholds": {
             "cpu": cpu_threshold,
             "temperature": temp_threshold,
