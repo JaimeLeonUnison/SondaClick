@@ -139,6 +139,7 @@ def get_connection():
     db_name = os.getenv('DB_NAME')
     db_port_str = os.getenv('DB_PORT', '3306')
 
+    #Logging debug
     logging.debug(f"[DB Connection] Intentando conectar a: Host={db_host}, User={db_user}, DBName={db_name}, Port={db_port_str}")
 
     if not all([db_host, db_user, db_name]): # db_password puede ser vacía para algunos setups locales
