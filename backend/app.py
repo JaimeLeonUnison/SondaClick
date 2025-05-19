@@ -54,10 +54,10 @@ def get_connection():
     """
     try:
         connection = pymysql.connect(
-            host=os.getenv('DB_HOST', '200.94.143.36'),
-            user=os.getenv('DB_USER', 'SONDAHMO'),
-            password=os.getenv('DB_PASSWORD', 'S0nd425*'),
-            database=os.getenv('DB_NAME', 'sondaclickmx'),
+            host=os.getenv('DB_HOST', ''),
+            user=os.getenv('DB_USER', ''),
+            password=os.getenv('DB_PASSWORD', ''),
+            database=os.getenv('DB_NAME', ''),
             port=int(os.getenv('DB_PORT', 3306)),
             charset='utf8mb4',
             connect_timeout=10 # Aumentado ligeramente el timeout de conexión
@@ -119,7 +119,7 @@ def execute_procedure(procedure_name, params=None):
         
     try:
         with connection.cursor() as cursor:
-            print(f"⏳ Ejecutando procedimiento {procedure_name} con parámetros: {params}")
+            print(f" Ejecutando procedimiento {procedure_name} con parámetros: {params}")
             cursor.callproc(procedure_name, params)
             connection.commit()
             print(f" Procedimiento {procedure_name} ejecutado y transacción confirmada")
@@ -1763,10 +1763,10 @@ def init_database():
                 
                 # Ahora verificar que la tabla tenga la estructura correcta
                 cursor.execute("""
-                DESCRIBE Incidentes
+                DESCRIBE NotificacionesCliente
                 """)
                 table_structure = cursor.fetchall()
-                print(f"Estructura de la tabla Incidentes: {table_structure}")
+                print(f"Estructura de la tabla NotificacionesCliente: {table_structure}")
                 
         except Exception as e:
             print(f" Error al actualizar el procedimiento almacenado: {e}")
