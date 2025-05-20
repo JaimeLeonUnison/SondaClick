@@ -3,6 +3,7 @@ import logging
 import os
 import sys # Necesario para sys.frozen y sys.executable
 import traceback # <--- MUEVE ESTA LÍNEA AQUÍ ARRIBA
+import datetime # Asegúrate que esta línea esté al inicio de tu archivo
 
 # Configurar logging
 
@@ -784,17 +785,80 @@ def get_password_info():
             "user_may_change": [r"(?i)(?:User may change password|El usuario puede cambiar la contraseña)\s+:\s*(Yes|No|Sí|No)",r"(?i)(?:User may change password|El usuario puede cambiar la contraseña)\s+(Yes|No|Sí|No)"]
         }
 
+        # Helper function to parse and format date string - VERSIÓN CORREGIDA
+        def format_date_from_string(date_str_candidate):
+            # Lista de formatos de fecha comunes (tanto con / como con -)
+            # Se intentarán en este orden.
+            date_formats_to_try = [
+                # Formatos con /
+                "%d/%m/%Y", "%m/%d/%Y", 
+                "%d/%m/%y", "%m/%d/%y",
+                # Formatos con -
+                "%Y-%m-%d", "%d-%m-%Y", "%m-%d-%Y",
+                "%y-%m-%d", "%d-%m-%y", "%m-%d-%y"
+            ]
+            
+            for fmt in date_formats_to_try:
+                try:
+                    # Intenta parsear la cadena candidata directamente con el formato actual
+                    dt_obj = datetime.datetime.strptime(date_str_candidate, fmt)
+                    
+                    # Ajustar año de 2 dígitos a 4 dígitos (ej. 25 -> 2025)
+                    if dt_obj.year < 100:
+                        current_century = (datetime.datetime.now().year // 100) * 100
+                        # Asegurarse de que el año resultante no sea en el futuro lejano si el siglo es incorrecto
+                        # Esto es una heurística simple; puede necesitar ajuste si se manejan fechas muy antiguas.
+                        year_candidate = dt_obj.year + current_century
+                        if year_candidate > datetime.datetime.now().year + 50: # Evitar años como 2125 si el actual es 20xx
+                            year_candidate -= 100
+                        dt_obj = dt_obj.replace(year=year_candidate)
+                        
+                    return dt_obj.strftime("%Y-%m-%d")
+                except ValueError:
+                    continue # Probar el siguiente formato
+            
+            # Si ningún formato conocido coincide, devolver la cadena original
+            print(f"[format_date_from_string] No se pudo parsear la fecha '{date_str_candidate}' con formatos conocidos.")
+            return date_str_candidate
+
         for key, regex_list in patterns.items():
             for regex in regex_list:
                 match = re.search(regex, output)
                 if match:
                     value = match.group(1).strip()
-                    if key == "password_last_set": password_last_set = value.split(" ")[0] # Tomar solo la fecha
-                    elif key == "password_expires": password_expires = value.split(" ")[0] if not ("never" in value.lower() or "nunca" in value.lower()) else "Nunca"
-                    elif key == "user_may_change": user_may_change = "Sí" if value.lower() in ["yes", "sí"] else "No"
+                    if key == "password_last_set":
+                        date_candidate = value.split(" ")[0]  # Tomar solo la parte de la fecha
+                        print(f"[get_password_info] password_last_set - value: '{value}', date_candidate: '{date_candidate}'")
+                        password_last_set = format_date_from_string(date_candidate)
+                    elif key == "password_expires":
+                        if "never" in value.lower() or "nunca" in value.lower():
+                            password_expires = "Nunca"
+                        else:
+                            date_candidate = value.split(" ")[0] # Tomar solo la parte de la fecha
+                            print(f"[get_password_info] password_expires - value: '{value}', date_candidate: '{date_candidate}'")
+                            password_expires = format_date_from_string(date_candidate)
+                    elif key == "user_may_change":
+                        # Para "Password changeable", el valor es una fecha o "Not applicable"
+                        # Si es una fecha, también la parseamos. Si no, mantenemos el string.
+                        if value.lower() in ["yes", "sí"]:
+                             user_may_change = "Sí"
+                        elif value.lower() in ["no", "not applicable"]: # "Not applicable" puede aparecer
+                             user_may_change = "No"
+                        else: # Intentar parsear como fecha si no es un Sí/No simple
+                            date_candidate = value.split(" ")[0]
+                            print(f"[get_password_info] user_may_change (date) - value: '{value}', date_candidate: '{date_candidate}'")
+                            parsed_date_changeable = format_date_from_string(date_candidate)
+                            # Si format_date_from_string devolvió la fecha parseada (contiene '-'), es una fecha válida.
+                            # Si devolvió el original y no es "Sí" o "No", podría ser un texto como "Not applicable"
+                            if parsed_date_changeable != date_candidate or date_candidate.count('/') == 2 or date_candidate.count('-') == 2 : # Heurística para ver si parece fecha
+                                user_may_change = parsed_date_changeable
+                            else: # Si no se pudo parsear como fecha y no es Sí/No, usar el valor original
+                                user_may_change = value
+
+
                     break 
         
-        print(f"[get_password_info] Raw output for {username}:\n{output}")
+        print(f"[get_password_info] Raw output for {username}:\n{output}") # ESTE LOG ES MUY IMPORTANTE
         print(f"[get_password_info] Parsed - Last Set: {password_last_set}, Expires: {password_expires}, May Change: {user_may_change}")
         
         return jsonify({
