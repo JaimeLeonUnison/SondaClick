@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Notification, ipcMain, dialog, Tray, Menu, nativeImage, MenuItemConstructorOptions } from 'electron';
+import { app, BrowserWindow, Notification, ipcMain, dialog, Tray, Menu, nativeImage, MenuItemConstructorOptions, screen } from 'electron';
 import * as path from 'path';
 import { spawn, ChildProcess, exec } from 'child_process';
 import * as dotenv from 'dotenv';
@@ -218,10 +218,29 @@ function createWindow() {
     ? path.join(process.env.VITE_PUBLIC, iconName) 
     : path.join(RENDERER_DIST, iconName);
 
+  // --- INICIO: Lógica para posición fija en la esquina inferior derecha ---
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize; // Usar workAreaSize para evitar superponerse a la barra de tareas
+
+  const windowWidth = 400;  // Tu ancho actual
+  const windowHeight = 650; // Tu alto actual
+  const marginFromEdge = 15; // Pequeño margen desde los bordes de la pantalla
+
+  const xPosition = screenWidth - windowWidth - marginFromEdge;
+  const yPosition = screenHeight - windowHeight - marginFromEdge;
+  // --- FIN: Lógica para posición fija ---
+
   win = new BrowserWindow({
-    width: 1200, // Ancho original
-    height: 800, // Alto original
+    width: windowWidth,    // Usar el ancho definido
+    height: windowHeight,  // Usar el alto definido
+    x: xPosition,          // Establecer la posición X calculada
+    y: yPosition,          // Establecer la posición Y calculada
     icon: fs.existsSync(iconPath) ? iconPath : undefined,
+    autoHideMenuBar: true,
+    resizable: false,      // Hacer la ventana no redimensionable para mantener la posición y tamaño
+    movable: false,
+    // frame: false,       // Opcional: si quieres una ventana sin bordes (más tipo widget)
+    // alwaysOnTop: true,  // Opcional: si quieres que esté siempre visible encima de otras apps
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'), // Tu preload existente
       nodeIntegration: false,

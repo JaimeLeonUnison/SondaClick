@@ -1706,6 +1706,28 @@ def open_password_dialog():
     except Exception as e:
         print(f"Error al abrir panel de contraseñas: {str(e)}")
         return jsonify({"success": False, "message": str(e)}), 500
+    
+@app.route('/api/validate-credentials', methods=['POST'])
+def validate_credentials():
+    data = request.get_json()
+    email = data.get('email')
+    project_id = data.get('projectId')
+    mac_address = get_main_mac_address()
+    
+    if not mac_address:
+        print(f"Error crítico: No se pudo obtener la MAC address de este equipo.")
+    
+    #--- INICIO: Lógica de Placeholder para Desarrollo ---#
+    #Define tus placeholders. ¡Recuerda quitar esto para producción!#
+    PLACEHOLDER_EMAIL = "test@sonda.com"
+    PLACEHOLDER_PROJECT_ID = "123456"
+    
+    if email == PLACEHOLDER_EMAIL and project_id == PLACEHOLDER_PROJECT_ID:
+        print(f"Acceso concedido con placeholders para: Email='{email}', ProjectID='{project_id}', MAC='{mac_address}'")
+        return jsonify({"success": True, "message": "Acceso concedido con datos de prueba."}), 200
+    else:
+        print(f"Intento de validación fallido (placeholders no coincidieron): Email='{email}', ProjectID='{project_id}'")
+        return jsonify({"success": False, "message": "Credenciales de prueba incorrectas o lógica de validación real no alcanzada."}), 401
 
 @app.route('/api/notifications-history', methods=['GET'])
 def get_notification_history():
