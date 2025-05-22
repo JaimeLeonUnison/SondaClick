@@ -134,6 +134,7 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+".rar"
 "*.exe" 
 "*.msi" 
 "*/win-unpacked/*" 
