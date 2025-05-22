@@ -142,3 +142,6 @@ dist
 frontend/release/
 windows_installer/*.msi
 frontend/SondaClickMX-win32-x64/
+windows_installer.rar
+frontend/packaged-backend/SondaClickBackend.exe
+backend/build/
