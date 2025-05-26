@@ -1,0 +1,1 @@
+"use strict";const{ipcRenderer:n,contextBridge:i}=require("electron");i.exposeInMainWorld("ipcRenderer",{on(e,r){return n.on(e,(o,...t)=>r(o,...t))},off(e,r){return n.off(e,r)},send(e,...r){return n.send(e,...r)},invoke(e,...r){return n.invoke(e,...r)}});module.exports={};

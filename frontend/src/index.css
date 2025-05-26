@@ -1,13 +1,20 @@
 @import "tailwindcss";
 
-/* Animaciones personalizadas */
-@keyframes card-popup {
-  0% {
-    opacity: 0;
-    transform: scale(0.95) translateY(-10px);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1) translateY(0);
-  }
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden; /* Esto ya previene el scroll en los niveles más altos */
+}
+
+/* Clase para ocultar la scrollbar */
+.no-scrollbar::-webkit-scrollbar {
+  display: none; /* Para navegadores WebKit (Chrome, Safari, Edge nuevo, Opera) */
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none; /* Para Internet Explorer 10+ */
+  scrollbar-width: none; /* Para Firefox */
 }

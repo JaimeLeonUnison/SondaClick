@@ -3,9 +3,15 @@ import * as path from 'path';
 import { spawn, ChildProcess, exec } from 'child_process';
 import * as dotenv from 'dotenv';
 import * as fs from 'fs'; // Necesario para verificar existencia de archivos
+import { fileURLToPath } from 'node:url'; // <--- AÑADIDO para ESM
+
+// --- INICIO: Definición de __dirname y __filename para ES Modules ---
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+// --- FIN: Definición de __dirname y __filename ---
 
 // --- Constantes y Variables Globales ---
-const APP_ROOT = path.join(__dirname, '..');
+const APP_ROOT = path.join(__dirname, '..'); // Ahora usa el __dirname definido para ESM
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
 const RENDERER_DIST = path.join(APP_ROOT, 'dist');
 
@@ -223,11 +229,11 @@ function createWindow() {
   const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize; // Usar workAreaSize para evitar superponerse a la barra de tareas
 
   const windowWidth = 400;  // Tu ancho actual
-  const windowHeight = 650; // Tu alto actual
-  const marginFromEdge = 15; // Pequeño margen desde los bordes de la pantalla
+  const windowHeight = 580; // Tu alto actual
+  //const marginFromEdge = 15; // Pequeño margen desde los bordes de la pantalla
 
-  const xPosition = screenWidth - windowWidth - marginFromEdge;
-  const yPosition = screenHeight - windowHeight - marginFromEdge;
+  const xPosition = screenWidth - windowWidth;
+  const yPosition = screenHeight - windowHeight;
   // --- FIN: Lógica para posición fija ---
 
   win = new BrowserWindow({
@@ -242,7 +248,7 @@ function createWindow() {
     // frame: false,       // Opcional: si quieres una ventana sin bordes (más tipo widget)
     // alwaysOnTop: true,  // Opcional: si quieres que esté siempre visible encima de otras apps
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'), // Tu preload existente
+      preload: path.join(__dirname, 'preload.js'), // Tu preload existente, ahora usa el __dirname de ESM
       nodeIntegration: false,
       contextIsolation: true,
     },

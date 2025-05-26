@@ -4,6 +4,7 @@ import "react-toastify/dist/ReactToastify.css";
 import Example from "../components/Example";
 import PasswordChangeButton from "../components/PasswordChangeButton";
 import { useDomainCheck } from "./hooks/useDomainCheck";
+import { TailwindAccordion } from "../components/AccordionItem";
 
 // Definición de interfaces actualizada
 interface MemoryInfo {
@@ -125,7 +126,8 @@ function App(): React.ReactElement {
   const [activeNotificationTicketId, setActiveNotificationTicketId] = useState<
     string | null
   >(null);
-  const [isTestButtonVisible, setIsTestButtonVisible] = useState<boolean>(false);
+  const [isTestButtonVisible, setIsTestButtonVisible] =
+    useState<boolean>(false);
 
   console.log(
     "HOOK VALS - isDomainLoading:",
@@ -655,6 +657,199 @@ function App(): React.ReactElement {
     };
   }, []); // El array vacío asegura que esto se ejecute solo al montar y desmontar
 
+  // Define los items para el acordeón DENTRO del componente App,
+  // idealmente donde tengas acceso a `info` si el contenido depende de ello.
+  let accordionSections: Array<{
+    id: string;
+    title: string;
+    content: React.ReactNode;
+  }> = [];
+  if (info) {
+    // Asegúrate que `info` no sea null
+    accordionSections = [
+      {
+        id: "system-info",
+        title: "Información del Sistema",
+        content: (
+          // Contenido interno de tu tarjeta original, sin el div contenedor de la tarjeta
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-4">
+            <p className="text-sm sm:text-base">
+              <strong>Usuario:</strong> {info.user}
+            </p>
+            <p className="text-sm sm:text-base">
+              <strong>Hostname:</strong> {info.hostname}
+            </p>
+            <p className="text-sm sm:text-base">
+              <strong>Sistema operativo:</strong> {info.os}
+            </p>
+            <p className="text-sm sm:text-base">
+              <strong>Marca:</strong> {info.manufacturer}
+            </p>
+            <p className="text-sm sm:text-base">
+              <strong>Modelo:</strong> {info.model}
+            </p>
+            <p className="text-sm sm:text-base">
+              <strong>Número de Serie:</strong> {info.serial_number}
+            </p>
+            <p className="text-sm sm:text-base">
+              <strong>Dominio:</strong> {info.domain}
+            </p>
+          </div>
+        ),
+      },
+      {
+        id: "performance",
+        title: "Rendimiento",
+        content: (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+            <div>
+              <p className="text-sm sm:text-base">
+                <strong>Uso CPU:</strong> {info.cpu_percent}%
+              </p>
+              <div className="w-full bg-gray-200 rounded-full h-2 sm:h-2.5 mb-2 sm:mb-4">
+                <div
+                  className="bg-blue-600 h-2 sm:h-2.5 rounded-full"
+                  style={{ width: `${info.cpu_percent}%` }}
+                ></div>
+              </div>
+            </div>
+            <p className="text-sm sm:text-base">
+              <strong>Velocidad CPU:</strong>{" "}
+              {info.cpu_speed
+                ? `${info.cpu_speed.toFixed(0)} MHz`
+                : "No disponible"}
+            </p>
+          </div>
+        ),
+      },
+      {
+        id: "memory-storage",
+        title: "Memoria y Almacenamiento",
+        content: (
+          <>
+            <p className="text-sm sm:text-base">
+              <strong>Memoria usada:</strong>{" "}
+              {(info.memory.used / 1024 ** 3).toFixed(2)} GB /{" "}
+              {(info.memory.total / 1024 ** 3).toFixed(2)} GB (
+              {info.memory.percent}%)
+            </p>
+            <div className="w-full bg-gray-200 rounded-full h-2 sm:h-2.5 mb-2 sm:mb-4">
+              <div
+                className="bg-purple-600 h-2 sm:h-2.5 rounded-full"
+                style={{ width: `${info.memory.percent}%` }}
+              ></div>
+            </div>
+
+            {info.disk_usage && (
+              <>
+                <p className="text-sm sm:text-base">
+                  <strong>Uso del Disco Duro:</strong> {info.disk_usage.percent}
+                  % ({(info.disk_usage.used / 1024 ** 3).toFixed(2)} GB usados
+                  de {(info.disk_usage.total / 1024 ** 3).toFixed(2)} GB)
+                </p>
+                <div className="w-full bg-gray-200 rounded-full h-2 sm:h-2.5 mb-2 sm:mb-4">
+                  <div
+                    className="bg-green-600 h-2 sm:h-2.5 rounded-full"
+                    style={{ width: `${info.disk_usage.percent}%` }}
+                  ></div>
+                </div>
+              </>
+            )}
+          </>
+        ),
+      },
+      {
+        id: "temperatures",
+        title: "Temperaturas",
+        content: (
+          // Combina ambas versiones de temperatura o elige una
+          // Aquí un ejemplo combinando con visibilidad condicional si es necesario,
+          // o simplemente pon el contenido que prefieras.
+          <>
+            {/* Versión móvil compacta (si quieres mantenerla separada) */}
+            <div className="block sm:hidden">
+              <div className="flex justify-between">
+                <p className="text-sm">
+                  <strong>CPU:</strong>{" "}
+                  <span className={getTemperatureColor(info.temperatures?.cpu)}>
+                    {info.temperatures?.cpu !== undefined
+                      ? `${info.temperatures.cpu.toFixed(1)}°C`
+                      : "N/D"}
+                  </span>
+                </p>
+                <p className="text-sm">
+                  <strong>GPU:</strong>{" "}
+                  <span className={getTemperatureColor(info.gpu_temp)}>
+                    {info.gpu_temp !== null ? `${info.gpu_temp}°C` : "N/D"}
+                  </span>
+                </p>
+              </div>
+            </div>
+            {/* Versión normal (si quieres mantenerla separada) */}
+            <div className="hidden sm:block">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <p className="text-base">
+                  <strong>Temp. CPU:</strong>{" "}
+                  <span className={getTemperatureColor(info.temperatures?.cpu)}>
+                    {info.temperatures?.cpu !== undefined
+                      ? `${info.temperatures.cpu.toFixed(1)} °C`
+                      : "No disponible"}
+                  </span>
+                </p>
+                <p className="text-base">
+                  <strong>Temp. GPU:</strong>{" "}
+                  <span className={getTemperatureColor(info.gpu_temp)}>
+                    {info.gpu_temp !== null
+                      ? `${info.gpu_temp} °C`
+                      : "No disponible"}
+                  </span>
+                </p>
+              </div>
+            </div>
+          </>
+        ),
+      },
+      {
+        id: "network-info",
+        title: "Información de Red",
+        content: (
+          <>
+            <p className="text-sm sm:text-base">
+              <strong>IP local:</strong> {info.ip_local}
+            </p>
+            <p className="text-sm sm:text-base mb-2">
+              <strong>IP pública:</strong> {info.ip_public}
+            </p>
+
+            {info.network_interfaces.length > 0 && (
+              <div className="mt-2">
+                <p className="font-semibold text-sm sm:text-base">
+                  Interfaces de red:
+                </p>
+                <div className="pl-2 sm:pl-4 mt-2">
+                  {info.network_interfaces.map((iface, index) => (
+                    <div
+                      key={index}
+                      className="mb-2 p-2 bg-green-100 rounded-md" // Puedes mantener estos estilos internos o simplificar
+                    >
+                      <p className="font-bold text-sm sm:text-base">
+                        {iface.name}
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-xs sm:text-sm">
+                        <p>IP: {iface.ip || "No disponible"}</p>
+                        <p>MAC: {iface.mac || "No disponible"}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        ),
+      },
+    ];
+  }
+
   return (
     <>
       {isValidationModalOpen && (
@@ -720,11 +915,11 @@ function App(): React.ReactElement {
       )}
       {!isValidationModalOpen && ( // Solo renderizar el contenido principal si el modal no está abierto
         <div
-          className="font-sans p-4 sm:p-6 md:p-8 max-w-7xl mx-auto"
-          style={{ fontFamily: "Arial" }}
+          className="font-sans p-4 sm:p-6 md:p-8 max-w-7xl mx-auto h-screen overflow-y-auto no-scrollbar" // <-- AÑADE no-scrollbar AQUÍ
+          // style={{ fontFamily: "Arial" }} // Tailwind maneja font-sans, puedes quitar esto si Roboto está configurado
         >
           <ToastContainer
-            position="top-right"
+            position="bottom-center"
             autoClose={5000}
             hideProgressBar={false}
             newestOnTop={false}
@@ -801,183 +996,14 @@ function App(): React.ReactElement {
           )}
 
           {info && !loading && (
-            <div className="space-y-4 sm:space-y-6">
-              {/* Información del Sistema */}
-              <div className="bg-gray-50 p-3 sm:p-4 rounded-lg shadow-sm">
-                <h2 className="text-lg sm:text-xl font-semibold mb-2">
-                  Información del Sistema
-                </h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-4">
-                  <p className="text-sm sm:text-base">
-                    <strong>Usuario:</strong> {info.user}
-                  </p>
-                  <p className="text-sm sm:text-base">
-                    <strong>Hostname:</strong> {info.hostname}
-                  </p>
-                  <p className="text-sm sm:text-base">
-                    <strong>Sistema operativo:</strong> {info.os}
-                  </p>
-                  <p className="text-sm sm:text-base">
-                    <strong>Marca:</strong> {info.manufacturer}
-                  </p>
-                  <p className="text-sm sm:text-base">
-                    <strong>Modelo:</strong> {info.model}
-                  </p>
-                  <p className="text-sm sm:text-base">
-                    <strong>Número de Serie:</strong> {info.serial_number}
-                  </p>
-                  <p className="text-sm sm:text-base">
-                    <strong>Dominio:</strong> {info.domain}
-                  </p>
-                </div>
-              </div>
-
-              {/* Rendimiento */}
-              <div className="bg-blue-50 p-3 sm:p-4 rounded-lg shadow-sm">
-                <h2 className="text-lg sm:text-xl font-semibold mb-2">
-                  Rendimiento
-                </h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                  <div>
-                    <p className="text-sm sm:text-base">
-                      <strong>Uso CPU:</strong> {info.cpu_percent}%
-                    </p>
-                    <div className="w-full bg-gray-200 rounded-full h-2 sm:h-2.5 mb-2 sm:mb-4">
-                      <div
-                        className="bg-blue-600 h-2 sm:h-2.5 rounded-full"
-                        style={{ width: `${info.cpu_percent}%` }}
-                      ></div>
-                    </div>
-                  </div>
-                  <p className="text-sm sm:text-base">
-                    <strong>Velocidad CPU:</strong>{" "}
-                    {info.cpu_speed
-                      ? `${info.cpu_speed.toFixed(0)} MHz`
-                      : "No disponible"}
-                  </p>
-                </div>
-              </div>
-
-              {/* Memoria y Almacenamiento */}
-              <div className="bg-purple-50 p-3 sm:p-4 rounded-lg shadow-sm">
-                <h2 className="text-lg sm:text-xl font-semibold mb-2">
-                  Memoria y Almacenamiento
-                </h2>
-                <p className="text-sm sm:text-base">
-                  <strong>Memoria usada:</strong>{" "}
-                  {(info.memory.used / 1024 ** 3).toFixed(2)} GB /{" "}
-                  {(info.memory.total / 1024 ** 3).toFixed(2)} GB (
-                  {info.memory.percent}%)
-                </p>
-                <div className="w-full bg-gray-200 rounded-full h-2 sm:h-2.5 mb-2 sm:mb-4">
-                  <div
-                    className="bg-purple-600 h-2 sm:h-2.5 rounded-full"
-                    style={{ width: `${info.memory.percent}%` }}
-                  ></div>
-                </div>
-
-                {info.disk_usage && (
-                  <>
-                    <p className="text-sm sm:text-base">
-                      <strong>Uso del Disco Duro:</strong>{" "}
-                      {info.disk_usage.percent}% (
-                      {(info.disk_usage.used / 1024 ** 3).toFixed(2)} GB usados
-                      de {(info.disk_usage.total / 1024 ** 3).toFixed(2)} GB)
-                    </p>
-                    <div className="w-full bg-gray-200 rounded-full h-2 sm:h-2.5 mb-2 sm:mb-4">
-                      <div
-                        className="bg-green-600 h-2 sm:h-2.5 rounded-full"
-                        style={{ width: `${info.disk_usage.percent}%` }}
-                      ></div>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              {/* Temperaturas - versión móvil compacta */}
-              <div className="block sm:hidden bg-amber-50 p-3 rounded-lg shadow-sm">
-                <h2 className="text-lg font-semibold mb-2">Temperaturas</h2>
-                <div className="flex justify-between">
-                  <p className="text-sm">
-                    <strong>CPU:</strong>{" "}
-                    <span
-                      className={getTemperatureColor(info.temperatures?.cpu)}
-                    >
-                      {info.temperatures?.cpu !== undefined
-                        ? `${info.temperatures.cpu.toFixed(1)}°C`
-                        : "N/D"}
-                    </span>
-                  </p>
-                  <p className="text-sm">
-                    <strong>GPU:</strong>{" "}
-                    <span className={getTemperatureColor(info.gpu_temp)}>
-                      {info.gpu_temp !== null ? `${info.gpu_temp}°C` : "N/D"}
-                    </span>
-                  </p>
-                </div>
-              </div>
-
-              {/* Temperaturas - versión normal */}
-              <div className="hidden sm:block bg-amber-50 p-4 rounded-lg shadow-sm">
-                <h2 className="text-xl font-semibold mb-2">Temperaturas</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <p className="text-base">
-                    <strong>Temp. CPU:</strong>{" "}
-                    <span
-                      className={getTemperatureColor(info.temperatures?.cpu)}
-                    >
-                      {info.temperatures?.cpu !== undefined
-                        ? `${info.temperatures.cpu.toFixed(1)} °C`
-                        : "No disponible"}
-                    </span>
-                  </p>
-                  <p className="text-base">
-                    <strong>Temp. GPU:</strong>{" "}
-                    <span className={getTemperatureColor(info.gpu_temp)}>
-                      {info.gpu_temp !== null
-                        ? `${info.gpu_temp} °C`
-                        : "No disponible"}
-                    </span>
-                  </p>
-                </div>
-              </div>
-
-              {/* Red */}
-              <div className="bg-green-50 p-3 sm:p-4 rounded-lg shadow-sm">
-                <h2 className="text-lg sm:text-xl font-semibold mb-2">
-                  Información de Red
-                </h2>
-                <p className="text-sm sm:text-base">
-                  <strong>IP local:</strong> {info.ip_local}
-                </p>
-                <p className="text-sm sm:text-base mb-2">
-                  <strong>IP pública:</strong> {info.ip_public}
-                </p>
-
-                {info.network_interfaces.length > 0 && (
-                  <div className="mt-2">
-                    <p className="font-semibold text-sm sm:text-base">
-                      Interfaces de red:
-                    </p>
-                    <div className="pl-2 sm:pl-4 mt-2">
-                      {info.network_interfaces.map((iface, index) => (
-                        <div
-                          key={index}
-                          className="mb-2 p-2 bg-green-100 rounded-md"
-                        >
-                          <p className="font-bold text-sm sm:text-base">
-                            {iface.name}
-                          </p>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-xs sm:text-sm">
-                            <p>IP: {iface.ip || "No disponible"}</p>
-                            <p>MAC: {iface.mac || "No disponible"}</p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
+            <div className="space-y-0">
+              {" "}
+              {/* Ajusta space-y si es necesario, AccordionItem ya tiene mb-2 */}
+              <TailwindAccordion
+                items={accordionSections}
+                allowMultipleOpen={true} // Opcional: permite abrir múltiples items
+                // defaultOpenId="system-info" // Opcional: abre un item por defecto
+              />
             </div>
           )}
 
