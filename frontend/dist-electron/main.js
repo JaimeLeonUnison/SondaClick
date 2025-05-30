@@ -289,6 +289,10 @@ function I() {
     resizable: !1,
     // Hacer la ventana no redimensionable para mantener la posición y tamaño
     movable: !1,
+    maximizable: !1,
+    //Quitar botón de maximizar
+    minimizable: !1,
+    //Quitar botón de minimizar
     // frame: false,       // Opcional: si quieres una ventana sin bordes (más tipo widget)
     // alwaysOnTop: true,  // Opcional: si quieres que esté siempre visible encima de otras apps
     webPreferences: {

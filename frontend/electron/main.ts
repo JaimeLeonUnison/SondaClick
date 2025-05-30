@@ -245,6 +245,8 @@ function createWindow() {
     autoHideMenuBar: true,
     resizable: false,      // Hacer la ventana no redimensionable para mantener la posición y tamaño
     movable: false,
+    maximizable: false,     //Quitar botón de maximizar
+    minimizable: false,    //Quitar botón de minimizar
     // frame: false,       // Opcional: si quieres una ventana sin bordes (más tipo widget)
     // alwaysOnTop: true,  // Opcional: si quieres que esté siempre visible encima de otras apps
     webPreferences: {

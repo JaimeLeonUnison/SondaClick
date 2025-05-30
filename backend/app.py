@@ -762,16 +762,16 @@ def get_password_info():
         output = ""
         if result_domain.returncode == 0:
             output = result_domain.stdout
-            print("[get_password_info] 'net user /domain' exitoso.")
+            logging.debug(f"[get_password_info] 'net user /domain' exitoso.")
         else:
-            print(f"[get_password_info] 'net user /domain' falló (Code: {result_domain.returncode}, Err: {result_domain.stderr.strip()}). Intentando local.")
+            logging.debug(f"[get_password_info] 'net user /domain' falló (Code: {result_domain.returncode}, Err: {result_domain.stderr.strip()}). Intentando local.")
             command_local = f"net user \"{username}\""
             result_local = subprocess.run(command_local, shell=True, capture_output=True, text=True, encoding='utf-8', errors='backslashreplace', timeout=10)
             if result_local.returncode == 0:
                 output = result_local.stdout
-                print("[get_password_info] 'net user' (local) exitoso.")
+                logging.debug(f"[get_password_info] 'net user' (local) exitoso.")
             else:
-                print(f"[get_password_info] 'net user' (local) también falló (Code: {result_local.returncode}, Err: {result_local.stderr.strip()}).")
+                logging.error(f"[get_password_info] 'net user' (local) también falló (Code: {result_local.returncode}, Err: {result_local.stderr.strip()}).") # CAMBIADO a logging.error
                 return jsonify({"success": False, "message": f"No se pudo obtener información para el usuario {username}. Domain error: {result_domain.stderr.strip()}. Local error: {result_local.stderr.strip()}"}), 400
         
         password_last_set = "No disponible"
@@ -780,9 +780,23 @@ def get_password_info():
         
         # Patrones mejorados y más flexibles
         patterns = {
-            "password_last_set": [r"(?i)(?:Password last set|Último cambio de contraseña|contraseña establecida por última vez|Última contraseña establecida)\s+:\s*(.+)", r"(?i)(?:Password last set|Último cambio de contraseña|contraseña establecida por última vez|Última contraseña establecida)\s+(.+?)"],
-            "password_expires": [r"(?i)(?:Password expires|La contraseña caduca|La contraseña expira)\s+:\s*(.+)", r"(?i)(?:Password expires|La contraseña caduca|La contraseña expira)\s+(.+?)"],
-            "user_may_change": [r"(?i)(?:User may change password|El usuario puede cambiar la contraseña)\s+:\s*(Yes|No|Sí|No)",r"(?i)(?:User may change password|El usuario puede cambiar la contraseña)\s+(Yes|No|Sí|No)"]
+            "password_last_set": [
+                r"(?i)(?:Password last set)\s*:?\s*(.+)",
+                # CORREGIDO: Cambiado "Último" a "Ultimo" para que coincida con la salida del log
+                r"(?i)(?:Ultimo cambio de contrase(?:ñ|\\xa4)a)\s*:?\s*(.+)", 
+                r"(?i)(?:contrase(?:ñ|\\xa4)a establecida por última vez)\s*:?\s*(.+)",
+                r"(?i)(?:Última contrase(?:ñ|\\xa4)a establecida)\s*:?\s*(.+)" # Esta también tiene Ú, podría necesitar ajuste si esa etiqueta aparece.
+            ],
+            "password_expires": [
+                r"(?i)(?:Password expires)\s*:?\s*(.+)",
+                r"(?i)(?:La contrase(?:ñ|\\xa4)a caduca)\s*:?\s*(.+)",
+                r"(?i)(?:La contrase(?:ñ|\\xa4)a expira)\s*:?\s*(.+)"
+            ],
+            "user_may_change": [
+                r"(?i)(?:User may change password)\s*:?\s*(Yes|No)",
+                # CORREGIDO: Cambiado el grupo de no captura a un grupo de captura
+                r"(?i)(?:El usuario puede cambiar la contrase(?:ñ|\\xa4)a)\s*:?\s*(Yes|No|S(?:í|\\xa1))"
+            ]
         }
 
         # Helper function to parse and format date string - VERSIÓN CORREGIDA
@@ -818,7 +832,7 @@ def get_password_info():
                     continue # Probar el siguiente formato
             
             # Si ningún formato conocido coincide, devolver la cadena original
-            print(f"[format_date_from_string] No se pudo parsear la fecha '{date_str_candidate}' con formatos conocidos.")
+            logging.warning(f"[format_date_from_string] No se pudo parsear la fecha '{date_str_candidate}' con formatos conocidos.") # CAMBIADO a logging.warning
             return date_str_candidate
 
         for key, regex_list in patterns.items():
@@ -828,38 +842,34 @@ def get_password_info():
                     value = match.group(1).strip()
                     if key == "password_last_set":
                         date_candidate = value.split(" ")[0]  # Tomar solo la parte de la fecha
-                        print(f"[get_password_info] password_last_set - value: '{value}', date_candidate: '{date_candidate}'")
+                        logging.debug(f"[get_password_info] password_last_set - value: '{value}', date_candidate: '{date_candidate}'") # CAMBIADO a logging.debug
                         password_last_set = format_date_from_string(date_candidate)
                     elif key == "password_expires":
                         if "never" in value.lower() or "nunca" in value.lower():
                             password_expires = "Nunca"
                         else:
                             date_candidate = value.split(" ")[0] # Tomar solo la parte de la fecha
-                            print(f"[get_password_info] password_expires - value: '{value}', date_candidate: '{date_candidate}'")
+                            logging.debug(f"[get_password_info] password_expires - value: '{value}', date_candidate: '{date_candidate}'") # CAMBIADO a logging.debug
                             password_expires = format_date_from_string(date_candidate)
                     elif key == "user_may_change":
-                        # Para "Password changeable", el valor es una fecha o "Not applicable"
-                        # Si es una fecha, también la parseamos. Si no, mantenemos el string.
-                        if value.lower() in ["yes", "sí"]:
+                        normalized_value = value.lower()
+                        # Comprobar "yes", "sí" (UTF-8), o "s\xa1" (de backslashreplace para 'í')
+                        if normalized_value in ["yes", "sí", "s\\xa1"]: # MODIFICADO para incluir "s\\xa1"
                              user_may_change = "Sí"
-                        elif value.lower() in ["no", "not applicable"]: # "Not applicable" puede aparecer
+                        elif normalized_value in ["no", "not applicable"]:
                              user_may_change = "No"
                         else: # Intentar parsear como fecha si no es un Sí/No simple
                             date_candidate = value.split(" ")[0]
-                            print(f"[get_password_info] user_may_change (date) - value: '{value}', date_candidate: '{date_candidate}'")
+                            logging.debug(f"[get_password_info] user_may_change (date) - value: '{value}', date_candidate: '{date_candidate}'")
                             parsed_date_changeable = format_date_from_string(date_candidate)
-                            # Si format_date_from_string devolvió la fecha parseada (contiene '-'), es una fecha válida.
-                            # Si devolvió el original y no es "Sí" o "No", podría ser un texto como "Not applicable"
-                            if parsed_date_changeable != date_candidate or date_candidate.count('/') == 2 or date_candidate.count('-') == 2 : # Heurística para ver si parece fecha
+                            if parsed_date_changeable != date_candidate or date_candidate.count('/') == 2 or date_candidate.count('-') == 2 :
                                 user_may_change = parsed_date_changeable
-                            else: # Si no se pudo parsear como fecha y no es Sí/No, usar el valor original
+                            else:
                                 user_may_change = value
-
-
                     break 
         
-        print(f"[get_password_info] Raw output for {username}:\n{output}") # ESTE LOG ES MUY IMPORTANTE
-        print(f"[get_password_info] Parsed - Last Set: {password_last_set}, Expires: {password_expires}, May Change: {user_may_change}")
+        logging.debug(f"[get_password_info] Raw output for {username}:\n{output}") # CAMBIADO a logging.debug
+        logging.info(f"[get_password_info] Parsed - Last Set: {password_last_set}, Expires: {password_expires}, May Change: {user_may_change}") # CAMBIADO a logging.info
         
         return jsonify({
             "success": True,
@@ -868,11 +878,10 @@ def get_password_info():
             "userMayChangePassword": user_may_change
         })
     except subprocess.TimeoutExpired:
-        print("[get_password_info] Timeout ejecutando 'net user'.")
+        logging.error("[get_password_info] Timeout ejecutando 'net user'.") # CAMBIADO a logging.error
         return jsonify({"success": False, "message": "Timeout al obtener información de contraseña."}), 500
     except Exception as e:
-        print(f"[get_password_info] Error: {e}")
-        traceback.print_exc()
+        logging.error(f"[get_password_info] Error: {e}", exc_info=True) # CAMBIADO a logging.error con exc_info=True
         return jsonify({"success": False, "message": f"Error: {str(e)}"}), 500
 
 @app.route("/api/password-expiration", methods=["GET", "OPTIONS"])
@@ -886,11 +895,11 @@ def password_expiration():
         is_machine_in_domain = machine_domain.upper() != "WORKGROUP"
         
         if not is_machine_in_domain:
-            print("[password_expiration] Máquina no en dominio, usando _get_local_password_expiration.")
+            logging.info("[password_expiration] Máquina no en dominio, usando _get_local_password_expiration.") # CAMBIADO a logging.info
             local_info = _get_local_password_expiration()
             return jsonify(local_info)
         
-        print(f"[password_expiration] Máquina en dominio '{machine_domain}'. Intentando net user para {current_user}.")
+        logging.info(f"[password_expiration] Máquina en dominio '{machine_domain}'. Intentando net user para {current_user}.") # CAMBIADO a logging.info
         try:
             net_user_cmd = f"net user \"{current_user}\" /domain"
             # Usar utf-8 y backslashreplace
@@ -922,7 +931,7 @@ def password_expiration():
                                 max_password_age_days = int(age_val)
                                 if max_password_age_days == 0: max_password_age_days = None # 0 a veces significa ilimitado
                 except Exception as policy_err:
-                    print(f"[password_expiration] Error obteniendo política de net accounts: {policy_err}")
+                    logging.warning(f"[password_expiration] Error obteniendo política de net accounts: {policy_err}", exc_info=True) # CAMBIADO a logging.warning
 
 
                 if password_expires_line:
@@ -934,7 +943,7 @@ def password_expiration():
                         
                         # Tomar solo la parte de la fecha
                         date_part_of_expiry_info = expiry_info_str.split(" ")[0]
-                        import datetime # Mover import aquí
+                        # import datetime # No es necesario si ya está importado globalmente
                         date_formats = ["%d/%m/%Y", "%m/%d/%Y", "%Y-%m-%d"]
                         expiry_date_obj = None
                         for fmt in date_formats:
@@ -952,7 +961,7 @@ def password_expiration():
                             else: message = f"Tu contraseña expirará el {expiry_date_obj.strftime('%Y-%m-%d')} (en {days_remaining} días)."
                             return jsonify({"expires": True, "daysRemaining": days_remaining, "expiryDate": expiry_date_obj.strftime('%Y-%m-%d'), "message": message, "method": "net_user_domain_parsed_date"})
                         else:
-                             print(f"[password_expiration] No se pudo parsear fecha de expiración directa: '{expiry_info_str}'")
+                             logging.warning(f"[password_expiration] No se pudo parsear fecha de expiración directa: '{expiry_info_str}'") # CAMBIADO a logging.warning
                 
                 # Si no hay línea de expiración directa o no se pudo parsear, intentar calcular con PwdLastSet y MaxPasswordAge
                 if password_last_set_line and max_password_age_days is not None and max_password_age_days > 0:
@@ -960,7 +969,7 @@ def password_expiration():
                     if len(parts_last_set) > 1:
                         last_set_info_str = parts_last_set[1].strip()
                         date_part_of_last_set = last_set_info_str.split(" ")[0]
-                        import datetime # Mover import aquí
+                        # import datetime # No es necesario si ya está importado globalmente
                         date_formats = ["%d/%m/%Y", "%m/%d/%Y", "%Y-%m-%d"]
                         last_set_date_obj = None
                         for fmt in date_formats:
@@ -979,25 +988,23 @@ def password_expiration():
                             else: message = f"Tu contraseña expirará el {calculated_expiry_date.strftime('%Y-%m-%d')} (en {days_remaining} días, calculado)."
                             return jsonify({"expires": True, "daysRemaining": days_remaining, "expiryDate": calculated_expiry_date.strftime('%Y-%m-%d'), "message": message, "method": "net_user_domain_calculated_date"})
                         else:
-                            print(f"[password_expiration] No se pudo parsear PwdLastSet: '{last_set_info_str}'")
+                            logging.warning(f"[password_expiration] No se pudo parsear PwdLastSet: '{last_set_info_str}'") # CAMBIADO a logging.warning
                 
                 # Fallback a PowerShell si net user no dio info clara
-                print("[password_expiration] 'net user /domain' no proporcionó información clara de expiración o no se pudo calcular. Intentando PowerShell.")
+                logging.info("[password_expiration] 'net user /domain' no proporcionó información clara de expiración o no se pudo calcular. Intentando PowerShell.") # CAMBIADO a logging.info
                 return _get_password_expiration_via_powershell()
             else:
-                print(f"[password_expiration] 'net user /domain' falló (Code: {result.returncode}, Err: {result.stderr.strip()}). Intentando PowerShell.")
+                logging.warning(f"[password_expiration] 'net user /domain' falló (Code: {result.returncode}, Err: {result.stderr.strip()}). Intentando PowerShell.") # CAMBIADO a logging.warning
                 return _get_password_expiration_via_powershell()
         except subprocess.TimeoutExpired:
-            print("[password_expiration] Timeout ejecutando 'net user /domain'. Intentando PowerShell.")
+            logging.warning("[password_expiration] Timeout ejecutando 'net user /domain'. Intentando PowerShell.") # CAMBIADO a logging.warning
             return _get_password_expiration_via_powershell()
         except Exception as net_user_error:
-            print(f"[password_expiration] Excepción con 'net user /domain': {net_user_error}. Intentando PowerShell.")
-            traceback.print_exc()
+            logging.error(f"[password_expiration] Excepción con 'net user /domain': {net_user_error}. Intentando PowerShell.", exc_info=True) # CAMBIADO a logging.error
             return _get_password_expiration_via_powershell()
             
     except Exception as e:
-        print(f"[password_expiration] Error general: {e}")
-        traceback.print_exc()
+        logging.error(f"[password_expiration] Error general: {e}", exc_info=True) # CAMBIADO a logging.error
         return jsonify({"expires": None, "message": f"Error al obtener información de expiración: {str(e)}", "method": "general_exception"})
 
 def _get_password_expiration_via_powershell():
@@ -1099,22 +1106,21 @@ def _get_password_expiration_via_powershell():
         
         if not output:
             stderr_output = result.stderr.strip()
-            print(f"[_get_password_expiration_via_powershell] PowerShell no produjo salida. Stderr: {stderr_output}")
+            logging.error(f"[_get_password_expiration_via_powershell] PowerShell no produjo salida. Stderr: {stderr_output}") # CAMBIADO a logging.error
             return jsonify({"expires": None, "message": f"Error de script PowerShell: {stderr_output if stderr_output else 'Sin salida.'}", "method": "PowerShell_NoOutput"})
 
         try:
             ps_json_data = json.loads(output)
             return jsonify(ps_json_data)
         except json.JSONDecodeError:
-            print(f"[_get_password_expiration_via_powershell] Error decodificando JSON de PowerShell: {output}")
+            logging.error(f"[_get_password_expiration_via_powershell] Error decodificando JSON de PowerShell: {output}", exc_info=True) # CAMBIADO a logging.error
             return jsonify({"expires": None, "message": f"Respuesta inesperada de PowerShell: {output}", "method": "PowerShell_InvalidJSON"})
 
     except subprocess.TimeoutExpired:
-        print("[_get_password_expiration_via_powershell] Timeout.")
+        logging.error("[_get_password_expiration_via_powershell] Timeout.") # CAMBIADO a logging.error
         return jsonify({"expires": None, "message": "Timeout ejecutando script de PowerShell.", "method": "PowerShell-Timeout"})
     except Exception as e:
-        print(f"[_get_password_expiration_via_powershell] Excepción: {e}")
-        traceback.print_exc()
+        logging.error(f"[_get_password_expiration_via_powershell] Excepción: {e}", exc_info=True) # CAMBIADO a logging.error
         return jsonify({"expires": None, "message": "No se pudo determinar la expiración (excepción en Python).", "method": "PowerShell_PythonException"})
 
 @app.route('/api/force-password-change', methods=['POST', 'OPTIONS'])
@@ -1142,8 +1148,7 @@ def force_password_change():
             return jsonify({"success": True, "message": "Se ha abierto el panel de control de cuentas de usuario para cambiar tu contraseña local.", "isOrganizationRequest": True })
             
     except Exception as e:
-        print(f"[force_password_change] Error: {str(e)}")
-        traceback.print_exc()
+        logging.error(f"[force_password_change] Error: {str(e)}", exc_info=True) # CAMBIADO a logging.error
         return jsonify({"success": False, "message": f"Error al iniciar el proceso de cambio de contraseña: {str(e)}"}), 500
 
 @app.route("/api/user-info", methods=["GET", "OPTIONS"])
@@ -1754,27 +1759,35 @@ def get_notification_history():
             return jsonify({"success": True, "history": [], "message": "No hay historial de notificaciones para este equipo."})
 
         formatted_history = []
-        # Columnas devueltas por SpConsultaNotificacion:
-        # item[0]: Hostname
+        # Columnas devueltas por SpConsultaNotificacion (según tu descripción):
+        # item[0]: RF-ID (Usado para RF-ID, que actualmente es tu Ticket en la imagen)
         # item[1]: MAC
-        # item[2]: Ticket
-        # item[3]: Descripción
-        # item[4]: Estatus
-        # Nota: SpConsultaNotificacion no parece devolver una fecha directamente.
-        # Si necesitas una fecha, deberás ajustar el SP o la tabla de origen.
+        # item[2]: Ticket (Este podría ser el ID de ticket que quieres si es diferente de Hostname/RF-ID)
+        # item[3]: Descripcion (VARCHAR(200))
+        # item[4]: estatus
         for item in history:
-            hostname = item[0] if len(item) > 0 else "N/A"
-            ticket_id = item[2] if len(item) > 2 else "N/A"
-            descripcion = item[3] if len(item) > 3 else "Sin descripción"
-            estatus = str(item[4]) if len(item) > 4 else "Estatus no disponible"
+            # Asumiendo que el Ticket ID que quieres mostrar es el RF-ID (item[0]) como en tu imagen actual
+            ticket_id_to_display = item[0] if len(item) > 0 else "N/A" 
             
-            # Construir el mensaje. Puedes ajustarlo según tus necesidades.
-            mensaje = f"Alerta en {hostname}: {descripcion}"
+            # Obtener la descripción. Asumimos que si item[3] existe, es la descripción.
+            # Si item[3] puede ser None desde la BD y quieres un fallback:
+            descripcion_raw = item[1] if len(item) > 1 else None
+            descripcion = descripcion_raw if descripcion_raw is not None else "Sin descripción"
+            
+            # La fecha ya no se procesa ni se incluye.
+            # fecha_ticket_raw = item[5] if len(item) > 5 else None <--- ELIMINADO
+            # mensaje = f"Alerta debido al siguiente motivo: {descripcion}" <--- MANTENIDO o AJUSTADO si es necesario
+
+            # Ajustar el mensaje si ya no depende de una "alerta" con fecha, o mantenerlo si "descripcion" es el motivo.
+            # Si la descripción ya es el mensaje completo que quieres mostrar:
+            # mensaje_final = descripcion
+            # O si quieres mantener el formato "Alerta debido al siguiente motivo:":
+            mensaje_final = f"Alerta crítica en equipo por el siguiente motivo: {descripcion}" # Ejemplo de ajuste
 
             formatted_history.append({
-                "ticketId": ticket_id,
-                "mensaje": mensaje,
-                "estatus": estatus
+                "ticketId": ticket_id_to_display,
+                "descripcion": descripcion, # Se mantiene la descripción
+                "mensaje": mensaje_final, # Usar el mensaje ajustado
             })
 
         return jsonify({"success": True, "history": formatted_history})
@@ -1808,7 +1821,7 @@ def shutdown_route():
         shutdown_function()
         return jsonify(message="Server is shutting down."), 200
 
-@app.route("/api/change-password", methods=["POST"])
+@app.route ("/api/change-password", methods=["POST"])
 def change_password_endpoint():
     """
     Endpoint para cambiar la contraseña del usuario

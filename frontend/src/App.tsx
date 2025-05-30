@@ -63,7 +63,7 @@ interface ValidationResponse {
 // NUEVA INTERFAZ para un item del historial de notificaciones
 interface NotificationHistoryItem {
   ticketId: string;
-  fechaIncidente: string; // O el nombre del campo que uses para la fecha
+  fechaTicket: string; // O el nombre del campo que uses para la fecha
   mensaje: string; // O una descripción del incidente
   estatus: string; // O el estado actual del ticket/notificación
   // Añade otros campos que quieras mostrar, ej: UsoCPU, UsoMemoria, etc.
@@ -195,36 +195,53 @@ function App(): React.ReactElement {
   };
 
   // Función para marcar una notificación como leída
-  const acknowledgeNotification = useCallback(async (ticketId: string) => {
-    console.log(
-      `[App.tsx - acknowledgeNotification] Acusando recibo del ticket: ${ticketId}`
-    );
-    try {
-      const response = await fetch(
-        "http://localhost:5000/api/acknowledge-notification",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ ticketId }),
-        }
+  const acknowledgeNotification = useCallback(
+    async (ticketId: string): Promise<boolean> => {
+      // Modificado para devolver Promise<boolean>
+      console.log(
+        `[App.tsx - acknowledgeNotification] Acusando recibo del ticket: ${ticketId}`
       );
-      const data: AcknowledgeNotificationResponse = await response.json();
-      if (response.ok && data.success) {
-        toast.success(`Notificación ${ticketId} marcada como leída.`);
-        setActiveNotificationTicketId(null); // Limpiar el ticket activo
-        toast.dismiss(`ticket-${ticketId}`); // Cierra el toast específico si aún está abierto
-      } else {
-        toast.error(
-          data.message || "Error al marcar la notificación como leída."
+      try {
+        const response = await fetch(
+          "http://localhost:5000/api/acknowledge-notification",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ ticketId }),
+          }
         );
+        const data: AcknowledgeNotificationResponse = await response.json();
+        if (response.ok && data.success) {
+          toast.success(`Notificación ${ticketId} marcada como leída.`);
+          setActiveNotificationTicketId(null); // Limpiar el ticket activo
+          toast.dismiss(`ticket-${ticketId}`); // Cierra el toast específico si aún está abierto
+          return true; // Indicar éxito
+        } else {
+          toast.error(
+            data.message || "Error al marcar la notificación como leída."
+          );
+          // Lanzar un error o devolver false para que el llamador sepa que falló
+          throw new Error(
+            data.message || "Error al marcar la notificación como leída."
+          );
+        }
+      } catch (err) {
+        console.error("[App.tsx - acknowledgeNotification] Error:", err);
+        // Asegurarse de que el toast de error se muestre si no lo hizo antes
+        if (!(err instanceof Error && toast.isActive(err.message))) {
+          // Evitar duplicar toasts si el error ya es el mensaje
+          toast.error(
+            (err instanceof Error ? err.message : String(err)) ||
+              "Error de conexión al marcar la notificación."
+          );
+        }
+        throw err; // Re-lanzar el error para que el llamador pueda manejarlo
       }
-    } catch (err) {
-      console.error("[App.tsx - acknowledgeNotification] Error:", err);
-      toast.error("Error de conexión al marcar la notificación.");
-    }
-  }, []);
+    },
+    [setActiveNotificationTicketId]
+  ); // Removido activeNotificationTicketId de las dependencias si no se usa directamente para leer su valor aquí
 
   // FUNCION PARA OBTENER LA DIRECCION MAC LOCAL
   // const getLocalMacAddress = async (): Promise<string | null> => {
@@ -1052,22 +1069,10 @@ function App(): React.ReactElement {
                                 {item.ticketId}
                               </span>
                             </p>
-                            <p className="text-xs text-gray-600">
-                              Fecha:{" "}
-                              <span className="font-normal">
-                                {new Date(item.fechaIncidente).toLocaleString()}
-                              </span>
-                            </p>
                             <p className="text-sm mt-1">
                               Mensaje:{" "}
                               <span className="font-normal">
                                 {item.mensaje}
-                              </span>
-                            </p>
-                            <p className="text-xs">
-                              Estatus:{" "}
-                              <span className="font-normal">
-                                {item.estatus}
                               </span>
                             </p>
                           </li>
@@ -1075,12 +1080,62 @@ function App(): React.ReactElement {
                       </ul>
                     )}
                 </div>
-                <button
-                  onClick={() => setIsHistoryModalOpen(false)}
-                  className="mt-4 bg-blue-500 hover:bg-blue-600 text-white py-2 px-4 rounded-lg self-end"
-                >
-                  Cerrar
-                </button>
+                {/* Contenedor para los botones del pie del modal */}
+                <div className="mt-4 flex flex-col sm:flex-row sm:justify-end sm:space-x-3 space-y-2 sm:space-y-0">
+                  {/* Botón para Marcar como Atendido */}
+                  {/* Solo se muestra si hay historial y al menos un elemento */}
+                  {notificationHistory.length > 0 && notificationHistory[0] && (
+                    <button
+                      onClick={async () => {
+                        // Convertir a async para usar await si acknowledgeNotification devuelve una promesa que indica éxito
+                        const ticketIdToAcknowledge =
+                          notificationHistory[0].ticketId;
+                        try {
+                          // Llama a acknowledgeNotification. Asumimos que devuelve una promesa
+                          // y que podemos saber si fue exitosa para proceder a actualizar el UI.
+                          // Si acknowledgeNotification ya maneja el toast, no necesitamos repetirlo aquí.
+                          // Modificaremos acknowledgeNotification para que devuelva un booleano o lance error.
+
+                          // Para este ejemplo, asumiremos que acknowledgeNotification
+                          // se ejecutará y si no lanza error, fue "exitoso" para el UI.
+                          // Lo ideal sería que acknowledgeNotification devuelva un booleano.
+                          await acknowledgeNotification(ticketIdToAcknowledge);
+
+                          // Si la llamada a acknowledgeNotification fue exitosa (no lanzó error),
+                          // actualiza el estado para remover el ítem del historial.
+                          setNotificationHistory((prevHistory) =>
+                            prevHistory.filter(
+                              (item) => item.ticketId !== ticketIdToAcknowledge
+                            )
+                          );
+
+                          // Opcional: Si la lista queda vacía después de remover, podrías cerrar el modal.
+                          if (notificationHistory.length === 1) {
+                            // Si solo había un elemento y se removió
+                            // setIsHistoryModalOpen(false); // Descomentar si quieres este comportamiento
+                          }
+                        } catch (error) {
+                          // El error ya debería ser manejado y mostrado por un toast dentro de acknowledgeNotification
+                          console.error(
+                            "Error al intentar marcar como atendido desde el modal:",
+                            error
+                          );
+                        }
+                      }}
+                      className="w-full sm:w-auto bg-green-500 hover:bg-green-600 text-white py-2 px-4 rounded-lg"
+                      title={`Marcar ticket ${notificationHistory[0].ticketId} como atendido`}
+                    >
+                      Marcar como Atendido
+                    </button>
+                  )}
+                  {/* Botón Cerrar existente */}
+                  <button
+                    onClick={() => setIsHistoryModalOpen(false)}
+                    className="w-full sm:w-auto bg-blue-500 hover:bg-blue-600 text-white py-2 px-4 rounded-lg"
+                  >
+                    Cerrar
+                  </button>
+                </div>
               </div>
             </div>
           )}
